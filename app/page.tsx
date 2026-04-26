@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { useExpenses } from "@/context/ExpenseContext";
+import { useLanguage } from "@/context/LanguageContext";
 
 const CHART_COLORS = [
   "#3B82F6",
@@ -44,15 +45,21 @@ function ExpensePieChart({
   title: string;
   data: CategorySlice[];
 }) {
+  const { t } = useLanguage();
+
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
+    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+      <h2 className="text-sm font-semibold text-slate-800 dark:text-white">
+        {title}
+      </h2>
       {data.length === 0 ? (
-        <p className="mt-3 text-sm text-slate-500">No data yet.</p>
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+          {t("noDataYet")}
+        </p>
       ) : (
         <>
-          <div className="mt-3 h-56 w-full min-w-0">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={220}>
+          <div className="mt-3 w-full min-w-0 shrink-0" style={{ height: 224 }}>
+            <ResponsiveContainer width="100%" height={224} minWidth={0} minHeight={200}>
               <PieChart>
                 <Pie
                   data={data}
@@ -70,7 +77,9 @@ function ExpensePieChart({
                     />
                   ))}
                 </Pie>
-                <Tooltip formatter={(value: number) => `€${value.toFixed(2)}`} />
+                <Tooltip
+                  formatter={(value) => `€${Number(value ?? 0).toFixed(2)}`}
+                />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -78,7 +87,7 @@ function ExpensePieChart({
             {data.map((item, index) => (
               <div
                 key={item.name}
-                className="flex items-center justify-between text-xs text-slate-600"
+                className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-300"
               >
                 <div className="flex items-center gap-2">
                   <span
@@ -101,6 +110,9 @@ function ExpensePieChart({
 
 export default function Home() {
   const { expenses, currentUser, selectedMonth } = useExpenses();
+  const { t } = useLanguage();
+  const displayName = currentUser ?? "—";
+
   const monthExpenses = useMemo(
     () => expenses.filter((expense) => expense.date.startsWith(selectedMonth)),
     [expenses, selectedMonth],
@@ -139,35 +151,39 @@ export default function Home() {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-        <p className="text-sm font-semibold text-emerald-700">Total Spent</p>
-        <p className="mt-1 text-3xl font-bold text-emerald-900">
+      <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm dark:border-emerald-800 dark:bg-emerald-950/40">
+        <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+          {t("totalSpent")}
+        </p>
+        <p className="mt-1 text-3xl font-bold text-emerald-900 dark:text-emerald-200">
           €{totalSpent.toFixed(2)}
         </p>
       </section>
 
       <div className="grid grid-cols-2 gap-3">
-        <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 shadow-sm">
-          <p className="text-xs font-medium text-blue-700">
-            {currentUser ?? "User"}&apos;s Total
+        <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 shadow-sm dark:border-blue-800 dark:bg-blue-950/40">
+          <p className="text-xs font-medium text-blue-700 dark:text-blue-400">
+            {t("userTotal", { name: displayName })}
           </p>
-          <p className="mt-1 text-xl font-semibold text-blue-900">
+          <p className="mt-1 text-xl font-semibold text-blue-900 dark:text-blue-200">
             €{userTotal.toFixed(2)}
           </p>
         </section>
-        <section className="rounded-xl border border-violet-200 bg-violet-50 p-4 shadow-sm">
-          <p className="text-xs font-medium text-violet-700">Joint Total</p>
-          <p className="mt-1 text-xl font-semibold text-violet-900">
+        <section className="rounded-xl border border-violet-200 bg-violet-50 p-4 shadow-sm dark:border-violet-800 dark:bg-violet-950/40">
+          <p className="text-xs font-medium text-violet-700 dark:text-violet-400">
+            {t("jointTotal")}
+          </p>
+          <p className="mt-1 text-xl font-semibold text-violet-900 dark:text-violet-200">
             €{jointTotal.toFixed(2)}
           </p>
         </section>
       </div>
 
       <ExpensePieChart
-        title={`${currentUser ?? "User"}'s Expenses`}
+        title={t("userExpenses", { name: displayName })}
         data={userChartData}
       />
-      <ExpensePieChart title="Joint Expenses" data={jointChartData} />
+      <ExpensePieChart title={t("jointExpenses")} data={jointChartData} />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+/** Expense categories: UI labels are localized in `AddExpenseForm`; `Expense.category` stays English. */
 import { useEffect, useState } from "react";
 import AddExpenseForm from "@/components/add-expense-form";
 
