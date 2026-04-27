@@ -10,11 +10,11 @@ import {
   LogOut,
   Moon,
   Sun,
-  UserRound,
-  UsersRound,
+  Users,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useExpenses } from "@/context/ExpenseContext";
+import { createClient } from "@/utils/supabase/client";
 import {
   useLanguage,
   type Language,
@@ -42,16 +42,10 @@ const navItems: NavItem[] = [
     icon: CirclePlus,
   },
   {
-    href: "/ali",
-    labelKey: "navAli",
-    titleKey: "navAli",
-    icon: UserRound,
-  },
-  {
-    href: "/zeynep",
-    labelKey: "navZeynep",
-    titleKey: "navZeynep",
-    icon: UsersRound,
+    href: "/members",
+    labelKey: "navMembers",
+    titleKey: "membersTitle",
+    icon: Users,
   },
   {
     href: "/joint-account",
@@ -64,13 +58,18 @@ const navItems: NavItem[] = [
 const pathTitleKeys: Record<string, TranslationKey> = {
   "/": "navDashboard",
   "/add": "navAddEntry",
-  "/ali": "navAli",
-  "/zeynep": "navZeynep",
+  "/members": "membersTitle",
   "/joint-account": "jointAccountTitle",
 };
 
 function getPageTitleKey(pathname: string): TranslationKey {
-  return pathTitleKeys[pathname] ?? "budgetTracker";
+  if (pathTitleKeys[pathname]) {
+    return pathTitleKeys[pathname];
+  }
+  if (pathname.startsWith("/members/")) {
+    return "membersTitle";
+  }
+  return "budgetTracker";
 }
 
 function HeaderControls() {
@@ -123,9 +122,33 @@ function HeaderControls() {
   );
 }
 
-function LoginScreen() {
-  const { setCurrentUser } = useExpenses();
+function LoginScreen({ contextError }: { contextError: string | null }) {
   const { t } = useLanguage();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setErrorMessage(null);
+
+    const supabase = createClient();
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+
+    setSubmitting(false);
+
+    if (error) {
+      setErrorMessage(error.message || t("signInFailed"));
+    }
+  };
+
+  const inputClass =
+    "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-blue-500 focus:ring-2 dark:border-gray-600 dark:bg-gray-800 dark:text-slate-100";
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-4 bg-slate-50 px-6 text-center dark:bg-gray-950">
@@ -137,24 +160,56 @@ function LoginScreen() {
           {t("appTitle")}
         </h1>
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-          {t("chooseUser")}
+          {t("signInSubtitle")}
         </p>
       </div>
 
-      <button
-        type="button"
-        onClick={() => setCurrentUser("Ali")}
-        className="w-full max-w-sm rounded-lg bg-blue-600 px-4 py-3 text-sm font-medium text-white dark:bg-blue-500"
+      <form
+        onSubmit={handleSubmit}
+        className="flex w-full max-w-sm flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm dark:border-gray-700 dark:bg-gray-900"
       >
-        {t("loginAsAli")}
-      </button>
-      <button
-        type="button"
-        onClick={() => setCurrentUser("Zeynep")}
-        className="w-full max-w-sm rounded-lg bg-slate-800 px-4 py-3 text-sm font-medium text-white dark:bg-gray-700"
-      >
-        {t("loginAsZeynep")}
-      </button>
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
+            {t("email")}
+          </span>
+          <input
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            className={inputClass}
+          />
+        </label>
+
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
+            {t("password")}
+          </span>
+          <input
+            type="password"
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            className={inputClass}
+          />
+        </label>
+
+        {(errorMessage || contextError) && (
+          <p className="text-xs font-medium text-red-600 dark:text-red-400">
+            {errorMessage ?? contextError}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={submitting}
+          className="mt-1 w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-blue-500 dark:hover:bg-blue-400"
+        >
+          {submitting ? t("signingIn") : t("signInButton")}
+        </button>
+      </form>
     </div>
   );
 }
@@ -164,11 +219,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const { t } = useLanguage();
   const activeTitle = t(getPageTitleKey(pathname));
 
-  const { currentUser, selectedMonth, setCurrentUser, setSelectedMonth } =
+  const { currentUser, selectedMonth, setSelectedMonth, signOut, loading, error } =
     useExpenses();
 
+  if (loading) {
+    return (
+      <div className="mx-auto flex min-h-dvh w-full max-w-md items-center justify-center bg-slate-50 px-6 text-center dark:bg-gray-950">
+        <p className="text-sm text-slate-500 dark:text-slate-400">{t("loading")}</p>
+      </div>
+    );
+  }
+
   if (!currentUser) {
-    return <LoginScreen />;
+    return <LoginScreen contextError={error} />;
   }
 
   return (
@@ -181,7 +244,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex shrink-0 flex-col items-end gap-2">
             <button
               type="button"
-              onClick={() => setCurrentUser(null)}
+              onClick={() => signOut()}
               className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 dark:border-gray-700 dark:text-slate-300"
             >
               <LogOut className="h-3.5 w-3.5" />
@@ -206,9 +269,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <main className="flex-1 px-4 py-5 pb-24">{children}</main>
 
       <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto w-full max-w-md border-t border-slate-200 bg-white dark:border-gray-800 dark:bg-gray-900">
-        <ul className="grid grid-cols-5">
+        <ul className="grid grid-cols-4">
           {navItems.map((item) => {
-            const isActive = pathname === item.href;
+            const isActive =
+              pathname === item.href ||
+              (item.href === "/members" && pathname.startsWith("/members"));
             const Icon = item.icon;
 
             return (

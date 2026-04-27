@@ -111,7 +111,7 @@ function ExpensePieChart({
 export default function Home() {
   const { expenses, currentUser, selectedMonth } = useExpenses();
   const { t } = useLanguage();
-  const displayName = currentUser ?? "—";
+  const displayName = currentUser?.display_name ?? "—";
 
   const monthExpenses = useMemo(
     () => expenses.filter((expense) => expense.date.startsWith(selectedMonth)),
@@ -120,12 +120,15 @@ export default function Home() {
   const userExpenses = useMemo(
     () =>
       monthExpenses.filter(
-        (expense) => currentUser !== null && expense.ledger === currentUser,
+        (expense) =>
+          currentUser !== null &&
+          expense.user_id === currentUser.id &&
+          !expense.is_joint,
       ),
     [monthExpenses, currentUser],
   );
   const jointExpenses = useMemo(
-    () => monthExpenses.filter((expense) => expense.ledger === "Joint Account"),
+    () => monthExpenses.filter((expense) => expense.is_joint),
     [monthExpenses],
   );
   const userChartData = useMemo(

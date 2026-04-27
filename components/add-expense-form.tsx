@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Expense, Ledger } from "@/types";
+import type { NewExpenseInput } from "@/types";
 import { useExpenses } from "@/context/ExpenseContext";
 import {
   CATEGORY_TO_I18N_KEY,
@@ -11,6 +11,8 @@ import {
 } from "@/context/LanguageContext";
 
 const DEFAULT_CATEGORY: ExpenseCategoryEnglish = EXPENSE_CATEGORY_ENGLISH[0];
+
+const JOINT_OPTION_VALUE = "__joint__";
 
 type Currency = "EUR" | "TRY";
 type AddExpenseFormProps = {
@@ -31,28 +33,25 @@ export default function AddExpenseForm({
   isFetchingLiveRate,
   isUsingFallbackRate,
 }: AddExpenseFormProps) {
-  const { addExpense, currentUser } = useExpenses();
+  const { addExpense, currentUser, members } = useExpenses();
   const { t } = useLanguage();
-  const ledgerOptions: Ledger[] =
-    currentUser === "Zeynep"
-      ? ["Zeynep", "Joint Account"]
-      : ["Ali", "Joint Account"];
 
   const [amount, setAmount] = useState("");
-  const [ledger, setLedger] = useState<Ledger>(() =>
-    currentUser === "Zeynep" ? "Zeynep" : "Ali",
-  );
+  const [ledger, setLedger] = useState<string>(() => currentUser?.id ?? "");
   const [category, setCategory] =
     useState<ExpenseCategoryEnglish>(DEFAULT_CATEGORY);
   const [date, setDate] = useState<string>(() => getTodayDate());
   const [note, setNote] = useState("");
   const [currency, setCurrency] = useState<Currency>("EUR");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
   const displayedExchangeRate = liveExchangeRate.toFixed(2);
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!amount || !date) {
+    if (!amount || !date || !currentUser) {
       return;
     }
 
@@ -74,23 +73,34 @@ export default function AddExpenseForm({
       : "";
     const mergedNote = [note.trim(), conversionNote].filter(Boolean).join(" ");
 
-    const expense: Expense = {
-      id: crypto.randomUUID(),
+    const isJoint = ledger === JOINT_OPTION_VALUE;
+    const userId = isJoint ? currentUser.id : ledger || currentUser.id;
+
+    const input: NewExpenseInput = {
       amount: finalAmount,
       category,
       date,
       note: mergedNote,
-      ledger,
+      user_id: userId,
+      is_joint: isJoint,
     };
 
-    addExpense(expense);
+    try {
+      setSubmitting(true);
+      setSubmitError(null);
+      await addExpense(input);
 
-    setAmount("");
-    setLedger(currentUser === "Zeynep" ? "Zeynep" : "Ali");
-    setCategory(EXPENSE_CATEGORY_ENGLISH[0]);
-    setDate(getTodayDate());
-    setNote("");
-    setCurrency("EUR");
+      setAmount("");
+      setLedger(currentUser.id);
+      setCategory(EXPENSE_CATEGORY_ENGLISH[0]);
+      setDate(getTodayDate());
+      setNote("");
+      setCurrency("EUR");
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -160,14 +170,15 @@ export default function AddExpenseForm({
           </span>
           <select
             value={ledger}
-            onChange={(event) => setLedger(event.target.value as Ledger)}
+            onChange={(event) => setLedger(event.target.value)}
             className={inputClassName}
           >
-            {ledgerOptions.map((option) => (
-              <option key={option} value={option}>
-                {option === "Joint Account" ? t("jointAccountTitle") : option}
+            {members.map((member) => (
+              <option key={member.id} value={member.id}>
+                {member.display_name}
               </option>
             ))}
+            <option value={JOINT_OPTION_VALUE}>{t("jointAccountTitle")}</option>
           </select>
         </label>
 
@@ -217,9 +228,16 @@ export default function AddExpenseForm({
         </label>
       </div>
 
+      {submitError && (
+        <p className="mt-3 text-xs font-medium text-red-600 dark:text-red-400">
+          {submitError}
+        </p>
+      )}
+
       <button
         type="submit"
-        className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 dark:bg-blue-500 dark:hover:bg-blue-400"
+        disabled={submitting || !currentUser}
+        className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-blue-500 dark:hover:bg-blue-400"
       >
         {t("saveExpense")}
       </button>

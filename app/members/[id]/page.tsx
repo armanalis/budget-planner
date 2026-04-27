@@ -1,31 +1,52 @@
 "use client";
 
+import { use } from "react";
+import { Trash2 } from "lucide-react";
 import { useExpenses } from "@/context/ExpenseContext";
 import {
   translateExpenseCategory,
   useLanguage,
 } from "@/context/LanguageContext";
-import { Trash2 } from "lucide-react";
 
 const cardClass =
   "rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900";
 
-export default function ZeynepPage() {
-  const { expenses, deleteExpense, currentUser, selectedMonth } = useExpenses();
+export default function MemberLedgerPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = use(params);
+  const { expenses, members, deleteExpense, currentUser, selectedMonth } =
+    useExpenses();
   const { t } = useLanguage();
+
+  const member = members.find((m) => m.id === id);
   const ledgerExpenses = expenses.filter(
     (expense) =>
-      expense.ledger === "Zeynep" && expense.date.startsWith(selectedMonth),
+      expense.user_id === id && expense.date.startsWith(selectedMonth),
   );
-  const canDelete = currentUser === "Zeynep";
+  const canDelete = currentUser?.id === id;
 
   return (
     <div className="space-y-3">
+      {member && (
+        <div className={cardClass}>
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            {t("membersTitle")}
+          </p>
+          <p className="mt-1 text-base font-semibold text-slate-900 dark:text-white">
+            {member.display_name}
+          </p>
+        </div>
+      )}
+
       {!canDelete && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
           {t("viewOnly")}
         </div>
       )}
+
       {ledgerExpenses.length === 0 ? (
         <div className={`${cardClass} text-sm text-slate-500 dark:text-slate-400`}>
           {t("noExpensesThisMonth")}
@@ -55,6 +76,7 @@ export default function ZeynepPage() {
             </div>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               {expense.date}
+              {expense.is_joint ? ` · ${t("jointAccountTitle")}` : ""}
             </p>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
               {expense.note || t("noNote")}
