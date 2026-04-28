@@ -11,6 +11,7 @@ import {
 import type {
   AppNotification,
   Expense,
+  Household,
   Member,
   NewExpenseInput,
   PendingJoinRequest,
@@ -21,6 +22,7 @@ type ExpenseContextValue = {
   expenses: Expense[];
   members: Member[];
   currentUser: Member | null;
+  household: Household | null;
   selectedMonth: string;
   loading: boolean;
   error: string | null;
@@ -91,6 +93,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [ownsHousehold, setOwnsHousehold] = useState<boolean>(false);
+  const [household, setHousehold] = useState<Household | null>(null);
 
   const refreshNotifications = useCallback(async () => {
     if (!authUserId) {
@@ -130,6 +133,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         setMembers([]);
         setExpenses([]);
         setOwnsHousehold(false);
+        setHousehold(null);
         return;
       }
 
@@ -139,6 +143,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         setMembers([]);
         setExpenses([]);
         setOwnsHousehold(false);
+        setHousehold(null);
 
         const { data: pendingRows, error: pendingError } = await supabase
           .from("household_join_requests")
@@ -208,7 +213,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           .order("date", { ascending: false }),
         supabase
           .from("households")
-          .select("id, created_by")
+          .select("id, name, created_by")
           .eq("id", me.household_id)
           .maybeSingle(),
       ]);
@@ -232,9 +237,19 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (!householdError && householdRow) {
-        const ownerId = (householdRow as { created_by: string | null }).created_by;
-        setOwnsHousehold(ownerId === signedInUserId);
+        const row = householdRow as {
+          id: string;
+          name: string;
+          created_by: string | null;
+        };
+        setHousehold({
+          id: row.id,
+          name: row.name,
+          created_by: row.created_by,
+        });
+        setOwnsHousehold(row.created_by === signedInUserId);
       } else {
+        setHousehold(null);
         setOwnsHousehold(false);
       }
     },
@@ -263,6 +278,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         setPendingRequest(null);
         setNotifications([]);
         setOwnsHousehold(false);
+        setHousehold(null);
         setLoading(false);
         return;
       }
@@ -284,6 +300,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         setPendingRequest(null);
         setNotifications([]);
         setOwnsHousehold(false);
+        setHousehold(null);
         setError(null);
         setLoading(false);
         return;
@@ -430,6 +447,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       expenses,
       members,
       currentUser,
+      household,
       selectedMonth,
       loading,
       error,
@@ -452,6 +470,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       expenses,
       members,
       currentUser,
+      household,
       selectedMonth,
       loading,
       error,

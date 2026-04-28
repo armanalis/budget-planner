@@ -5,6 +5,12 @@ export interface Member {
   created_at: string;
 }
 
+export interface Household {
+  id: string;
+  name: string;
+  created_by: string | null;
+}
+
 export interface Expense {
   id: string;
   household_id: string;

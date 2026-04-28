@@ -11,6 +11,7 @@ import {
   LogOut,
   Moon,
   RefreshCcw,
+  Settings,
   Sun,
   Users,
 } from "lucide-react";
@@ -63,6 +64,7 @@ const pathTitleKeys: Record<string, TranslationKey> = {
   "/members": "membersTitle",
   "/joint-account": "jointAccountTitle",
   "/notifications": "notificationsTitle",
+  "/settings": "settingsTitle",
 };
 
 function getPageTitleKey(pathname: string): TranslationKey {
@@ -79,6 +81,7 @@ function isNavItemActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
   if (href === "/members") return pathname.startsWith("/members");
   if (href === "/notifications") return pathname.startsWith("/notifications");
+  if (href === "/settings") return pathname.startsWith("/settings");
   return pathname === href;
 }
 
@@ -152,6 +155,24 @@ function NotificationBell() {
           {unreadNotificationCount > 9 ? "9+" : unreadNotificationCount}
         </span>
       )}
+    </Link>
+  );
+}
+
+function SettingsButton() {
+  const { t } = useLanguage();
+  const pathname = usePathname();
+  const isActive = pathname.startsWith("/settings");
+
+  return (
+    <Link
+      href="/settings"
+      aria-label={t("settingsTitle")}
+      className={`relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition dark:border-gray-700 dark:bg-gray-800 dark:text-slate-200 ${
+        isActive ? "ring-2 ring-blue-500" : ""
+      }`}
+    >
+      <Settings className="h-4 w-4" aria-hidden />
     </Link>
   );
 }
@@ -319,6 +340,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const {
     currentUser,
+    household,
     selectedMonth,
     setSelectedMonth,
     signOut,
@@ -360,7 +382,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <p className="text-base font-semibold text-slate-900 dark:text-white">
             {t("appTitle")}
           </p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          {household && (
+            <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-gray-800 dark:bg-gray-800/60">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                {t("householdLabel")}
+              </p>
+              <p className="break-words text-sm font-medium text-slate-800 dark:text-slate-100">
+                {household.name}
+              </p>
+            </div>
+          )}
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
             {currentUser.display_name}
           </p>
         </div>
@@ -404,6 +436,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 )}
               </Link>
             </li>
+            <li>
+              <Link
+                href="/settings"
+                className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
+                  isNavItemActive(pathname, "/settings")
+                    ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                    : "text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-gray-800"
+                }`}
+              >
+                <Settings className="h-4 w-4" aria-hidden />
+                <span>{t("navSettings")}</span>
+              </Link>
+            </li>
           </ul>
         </nav>
 
@@ -438,12 +483,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {/* Mobile-only header */}
         <header className="sticky top-0 z-10 mx-auto w-full max-w-md border-b border-slate-200 bg-white/90 px-4 py-4 backdrop-blur dark:border-gray-800 dark:bg-gray-900/90 md:hidden">
           <div className="flex items-start justify-between gap-3">
-            <h1 className="text-base font-semibold text-slate-900 dark:text-white">
-              {activeTitle}
-            </h1>
+            <div className="min-w-0">
+              <h1 className="truncate text-base font-semibold text-slate-900 dark:text-white">
+                {activeTitle}
+              </h1>
+              {household && (
+                <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
+                  {t("householdLabel")}: {household.name}
+                </p>
+              )}
+            </div>
             <div className="flex shrink-0 flex-col items-end gap-2">
               <div className="flex items-center gap-2">
                 <NotificationBell />
+                <SettingsButton />
                 <button
                   type="button"
                   onClick={() => signOut()}
@@ -475,7 +528,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <h1 className="text-lg font-semibold text-slate-900 dark:text-white">
               {activeTitle}
             </h1>
-            <NotificationBell />
+            <div className="flex items-center gap-2">
+              <NotificationBell />
+              <SettingsButton />
+            </div>
           </div>
         </header>
 

@@ -101,8 +101,8 @@ ALTER TABLE public.household_join_requests ENABLE ROW LEVEL SECURITY;
 -- Helper that returns the household id of the currently authenticated user.
 -- Defined as SECURITY DEFINER so it can read public.users without recursing
 -- through that table's own RLS policies.
-DROP FUNCTION IF EXISTS public.current_household_id();
-CREATE FUNCTION public.current_household_id()
+-- Uses CREATE OR REPLACE so existing policies that depend on it keep working.
+CREATE OR REPLACE FUNCTION public.current_household_id()
 RETURNS UUID
 LANGUAGE sql
 STABLE
