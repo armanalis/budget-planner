@@ -58,10 +58,12 @@ export default function AddPage() {
   }, []);
 
   return (
-    <AddExpenseForm
-      liveExchangeRate={liveExchangeRate}
-      isFetchingLiveRate={isFetchingLiveRate}
-      isUsingFallbackRate={isUsingFallbackRate}
-    />
+    <div className="mx-auto w-full max-w-2xl">
+      <AddExpenseForm
+        liveExchangeRate={liveExchangeRate}
+        isFetchingLiveRate={isFetchingLiveRate}
+        isUsingFallbackRate={isUsingFallbackRate}
+      />
+    </div>
   );
 }

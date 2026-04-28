@@ -153,17 +153,16 @@ export default function Home() {
   );
 
   return (
-    <div className="space-y-4">
-      <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm dark:border-emerald-800 dark:bg-emerald-950/40">
-        <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-          {t("totalSpent")}
-        </p>
-        <p className="mt-1 text-3xl font-bold text-emerald-900 dark:text-emerald-200">
-          €{totalSpent.toFixed(2)}
-        </p>
-      </section>
-
-      <div className="grid grid-cols-2 gap-3">
+    <div className="space-y-4 md:space-y-6">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:gap-6">
+        <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm dark:border-emerald-800 dark:bg-emerald-950/40">
+          <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+            {t("totalSpent")}
+          </p>
+          <p className="mt-1 text-3xl font-bold text-emerald-900 dark:text-emerald-200">
+            €{totalSpent.toFixed(2)}
+          </p>
+        </section>
         <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 shadow-sm dark:border-blue-800 dark:bg-blue-950/40">
           <p className="text-xs font-medium text-blue-700 dark:text-blue-400">
             {t("userTotal", { name: displayName })}
@@ -182,11 +181,13 @@ export default function Home() {
         </section>
       </div>
 
-      <ExpensePieChart
-        title={t("userExpenses", { name: displayName })}
-        data={userChartData}
-      />
-      <ExpensePieChart title={t("jointExpenses")} data={jointChartData} />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6">
+        <ExpensePieChart
+          title={t("userExpenses", { name: displayName })}
+          data={userChartData}
+        />
+        <ExpensePieChart title={t("jointExpenses")} data={jointChartData} />
+      </div>
     </div>
   );
 }
