@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect } from "react";
+import { useLayoutEffect } from "react";
 import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes";
 import type { ReactNode } from "react";
 
@@ -37,29 +37,6 @@ function ThemeStateSync({ children }: { children: ReactNode }) {
   return children;
 }
 
-function ThemeDebugMount() {
-  useEffect(() => {
-    // #region agent log
-    fetch("http://127.0.0.1:7863/ingest/47e3ad6d-fc70-4a01-9dfc-fd6ebfda7cca", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "0f3cda",
-      },
-      body: JSON.stringify({
-        sessionId: "0f3cda",
-        location: "components/ThemeProvider.tsx:ThemeDebugMount",
-        message: "next-themes mounted (package renders inline script for FOUC)",
-        data: { note: "see next-themes dist script element" },
-        timestamp: Date.now(),
-        hypothesisId: "H-C-script-warning-source",
-      }),
-    }).catch(() => {});
-    // #endregion
-  }, []);
-  return null;
-}
-
 export function ThemeProvider({ children }: { children: ReactNode }) {
   return (
     <NextThemesProvider
@@ -69,7 +46,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       disableTransitionOnChange
       storageKey={STORAGE_KEY}
     >
-      <ThemeDebugMount />
       <ThemeStateSync>{children}</ThemeStateSync>
     </NextThemesProvider>
   );

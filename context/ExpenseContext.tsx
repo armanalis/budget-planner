@@ -10,19 +10,59 @@ import {
 } from "react";
 import type {
   AppNotification,
+  Budget,
   Expense,
   Household,
   Member,
   NewExpenseInput,
   PendingJoinRequest,
+  RecurringExpense,
+  SubcategoryBudget,
 } from "@/types";
 import { createClient } from "@/utils/supabase/client";
+
+type SessionLikeError = { message?: string | null };
+
+/** True when cookies/storage hold a Supabase session the server no longer accepts. */
+function isStaleRefreshSessionError(error: SessionLikeError | null): boolean {
+  const message = error?.message?.toLowerCase() ?? "";
+  if (!message) return false;
+  return (
+    message.includes("refresh token") ||
+    message.includes("invalid jwt") ||
+    /\bjwt\b[^a-z]*expired/.test(message) ||
+    message.includes("session expired")
+  );
+}
+
+async function clearStaleAuthSession(client: ReturnType<typeof createClient>) {
+  try {
+    await client.auth.signOut({ scope: "local" });
+  } catch {
+    /* cookies/storage may already be empty */
+  }
+}
+
+export type NewRecurringExpenseInput = Omit<
+  RecurringExpense,
+  "id" | "household_id" | "next_process_month"
+> & {
+  next_process_month?: string;
+};
+
+export type ProcessRecurringResult = {
+  processedCount: number;
+};
 
 type ExpenseContextValue = {
   expenses: Expense[];
   members: Member[];
   currentUser: Member | null;
   household: Household | null;
+  /** Every household the current user belongs to. */
+  myHouseholds: Household[];
+  /** The household the current user is currently looking at. */
+  activeHouseholdId: string | null;
   selectedMonth: string;
   loading: boolean;
   error: string | null;
@@ -31,6 +71,9 @@ type ExpenseContextValue = {
   notifications: AppNotification[];
   unreadNotificationCount: number;
   ownsHousehold: boolean;
+  budgets: Budget[];
+  subcategoryBudgets: SubcategoryBudget[];
+  recurringExpenses: RecurringExpense[];
   addExpense: (input: NewExpenseInput) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   setSelectedMonth: (month: string) => void;
@@ -40,13 +83,49 @@ type ExpenseContextValue = {
   markNotificationRead: (id: string) => Promise<void>;
   approveJoinRequest: (requestId: string) => Promise<void>;
   rejectJoinRequest: (requestId: string) => Promise<void>;
+  renameHousehold: (newName: string) => Promise<void>;
+  deleteActiveHousehold: () => Promise<void>;
+  updateBudget: (category: string, limitAmount: number) => Promise<void>;
+  upsertSubcategoryBudget: (
+    mainCategory: string,
+    subCategory: string,
+    limitAmount: number,
+  ) => Promise<void>;
+  deleteSubcategoryBudget: (
+    mainCategory: string,
+    subCategory: string,
+  ) => Promise<void>;
+  createRecurringExpense: (input: NewRecurringExpenseInput) => Promise<void>;
+  deleteRecurringExpense: (id: string) => Promise<void>;
+  processRecurringExpenses: () => Promise<ProcessRecurringResult>;
+  /** Switch the active household to one the user already belongs to. */
+  switchHousehold: (newHouseholdId: string) => Promise<void>;
 };
 
 function getCurrentMonth() {
   return new Date().toISOString().slice(0, 7);
 }
 
+function getTodayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addOneMonth(yyyymm: string): string {
+  const [y, m] = yyyymm.split("-").map(Number);
+  if (!y || !m) return yyyymm;
+  const next = new Date(Date.UTC(y, m, 1));
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 function normalizeExpense(row: Record<string, unknown>): Expense {
+  const resolvedMain =
+    row.main_category == null || String(row.main_category).trim() === ""
+      ? String(row.category ?? "")
+      : String(row.main_category);
+  const resolvedSub =
+    row.sub_category == null || String(row.sub_category).trim() === ""
+      ? null
+      : String(row.sub_category);
   return {
     id: String(row.id),
     household_id: String(row.household_id),
@@ -55,10 +134,85 @@ function normalizeExpense(row: Record<string, unknown>): Expense {
       typeof row.amount === "string"
         ? Number(row.amount)
         : Number(row.amount ?? 0),
+    main_category: resolvedMain || "Other",
+    sub_category: resolvedSub,
     category: String(row.category ?? ""),
     date: String(row.date ?? ""),
     note: String(row.note ?? ""),
     is_joint: Boolean(row.is_joint),
+  };
+}
+
+function normalizeBudget(row: Record<string, unknown>): Budget {
+  return {
+    id: String(row.id),
+    household_id: String(row.household_id),
+    category: String(row.category ?? ""),
+    limit_amount:
+      typeof row.limit_amount === "string"
+        ? Number(row.limit_amount)
+        : Number(row.limit_amount ?? 0),
+  };
+}
+
+function normalizeSubcategoryBudget(
+  row: Record<string, unknown>,
+): SubcategoryBudget {
+  return {
+    id: String(row.id),
+    household_id: String(row.household_id),
+    main_category: String(row.main_category ?? ""),
+    sub_category: String(row.sub_category ?? ""),
+    limit_amount:
+      typeof row.limit_amount === "string"
+        ? Number(row.limit_amount)
+        : Number(row.limit_amount ?? 0),
+  };
+}
+
+function normalizeRecurringExpense(
+  row: Record<string, unknown>,
+): RecurringExpense {
+  const resolvedMain =
+    row.main_category == null || String(row.main_category).trim() === ""
+      ? String(row.category ?? "")
+      : String(row.main_category);
+  const resolvedSub =
+    row.sub_category == null || String(row.sub_category).trim() === ""
+      ? null
+      : String(row.sub_category);
+  return {
+    id: String(row.id),
+    household_id: String(row.household_id),
+    user_id: String(row.user_id),
+    amount:
+      typeof row.amount === "string"
+        ? Number(row.amount)
+        : Number(row.amount ?? 0),
+    main_category: resolvedMain || "Other",
+    sub_category: resolvedSub,
+    category: String(row.category ?? ""),
+    note: row.note == null ? "" : String(row.note),
+    is_joint: Boolean(row.is_joint),
+    next_process_month: String(row.next_process_month ?? ""),
+  };
+}
+
+function normalizeMember(row: Record<string, unknown>): Member {
+  return {
+    id: String(row.id),
+    active_household_id:
+      row.active_household_id == null ? null : String(row.active_household_id),
+    display_name: String(row.display_name ?? ""),
+    created_at: String(row.created_at ?? ""),
+  };
+}
+
+function normalizeHousehold(row: Record<string, unknown>): Household {
+  return {
+    id: String(row.id),
+    name: String(row.name ?? ""),
+    created_by: row.created_by == null ? null : String(row.created_by),
   };
 }
 
@@ -94,6 +248,15 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [ownsHousehold, setOwnsHousehold] = useState<boolean>(false);
   const [household, setHousehold] = useState<Household | null>(null);
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [subcategoryBudgets, setSubcategoryBudgets] = useState<
+    SubcategoryBudget[]
+  >([]);
+  const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpense[]>(
+    [],
+  );
+  const [myHouseholds, setMyHouseholds] = useState<Household[]>([]);
+  const [activeHouseholdId, setActiveHouseholdId] = useState<string | null>(null);
 
   const refreshNotifications = useCallback(async () => {
     if (!authUserId) {
@@ -117,33 +280,175 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     );
   }, [supabase, authUserId]);
 
+  const resetHouseholdState = useCallback(() => {
+    setMembers([]);
+    setExpenses([]);
+    setHousehold(null);
+    setBudgets([]);
+    setSubcategoryBudgets([]);
+    setRecurringExpenses([]);
+    setOwnsHousehold(false);
+  }, []);
+
+  /**
+   * Loads everything that's scoped to ONE specific household: members,
+   * expenses, the household record itself, budgets, and recurring templates.
+   * RLS uses `current_household_id()` (= users.active_household_id), so we
+   * always scope by `householdId` explicitly to keep the queries deterministic.
+   */
+  const loadActiveHouseholdData = useCallback(
+    async (householdId: string, signedInUserId: string) => {
+      const [
+        { data: memberRows, error: membersError },
+        { data: expenseRows, error: expensesError },
+        { data: householdRpcRows, error: householdRpcError },
+        { data: budgetRows, error: budgetsError },
+        { data: subcategoryRows, error: subcategoryError },
+        { data: recurringRows, error: recurringError },
+      ] = await Promise.all([
+        supabase
+          .from("household_members")
+          .select(
+            "user:users(id, active_household_id, display_name, created_at)",
+          )
+          .eq("household_id", householdId),
+        supabase
+          .from("expenses")
+          .select(
+            "id, household_id, user_id, amount, main_category, sub_category, category, date, note, is_joint",
+          )
+          .eq("household_id", householdId)
+          .order("date", { ascending: false }),
+        supabase.rpc("get_my_household"),
+        supabase
+          .from("budgets")
+          .select("id, household_id, category, limit_amount")
+          .eq("household_id", householdId),
+        supabase
+          .from("subcategory_budgets")
+          .select("id, household_id, main_category, sub_category, limit_amount")
+          .eq("household_id", householdId),
+        supabase
+          .from("recurring_expenses")
+          .select(
+            "id, household_id, user_id, amount, main_category, sub_category, category, note, is_joint, next_process_month",
+          )
+          .eq("household_id", householdId)
+          .order("next_process_month", { ascending: true }),
+      ]);
+
+      const householdRow = Array.isArray(householdRpcRows)
+        ? householdRpcRows[0]
+        : householdRpcRows;
+
+      if (membersError) {
+        setError(membersError.message);
+        setMembers([]);
+      } else {
+        type MemberRowEnvelope = {
+          user:
+            | Record<string, unknown>
+            | Record<string, unknown>[]
+            | null;
+        };
+        const rows = (memberRows ?? []) as MemberRowEnvelope[];
+        const flattened = rows
+          .map((row) =>
+            Array.isArray(row.user) ? row.user[0] ?? null : row.user,
+          )
+          .filter((u): u is Record<string, unknown> => u != null);
+        setMembers(
+          flattened
+            .map((u) => normalizeMember(u))
+            .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+        );
+      }
+
+      if (expensesError) {
+        setError((prev) => prev ?? expensesError.message);
+        setExpenses([]);
+      } else {
+        setExpenses(
+          (expenseRows ?? []).map((row) =>
+            normalizeExpense(row as Record<string, unknown>),
+          ),
+        );
+      }
+
+      if (!householdRpcError && householdRow) {
+        const row = normalizeHousehold(householdRow as Record<string, unknown>);
+        setHousehold(row);
+        setOwnsHousehold(row.created_by === signedInUserId);
+      } else {
+        setHousehold(null);
+        setOwnsHousehold(false);
+      }
+
+      if (budgetsError) {
+        setError((prev) => prev ?? budgetsError.message);
+        setBudgets([]);
+      } else {
+        setBudgets(
+          (budgetRows ?? []).map((row) =>
+            normalizeBudget(row as Record<string, unknown>),
+          ),
+        );
+      }
+
+      if (recurringError) {
+        setError((prev) => prev ?? recurringError.message);
+        setRecurringExpenses([]);
+      } else {
+        setRecurringExpenses(
+          (recurringRows ?? []).map((row) =>
+            normalizeRecurringExpense(row as Record<string, unknown>),
+          ),
+        );
+      }
+
+      if (subcategoryError) {
+        setError((prev) => prev ?? subcategoryError.message);
+        setSubcategoryBudgets([]);
+      } else {
+        setSubcategoryBudgets(
+          (subcategoryRows ?? []).map((row) =>
+            normalizeSubcategoryBudget(row as Record<string, unknown>),
+          ),
+        );
+      }
+    },
+    [supabase],
+  );
+
+  /**
+   * Loads everything that's scoped to the signed-in USER: their profile, the
+   * full list of households they belong to, and any pending join request.
+   * Then defers to {@link loadActiveHouseholdData} for the active household.
+   */
   const loadHouseholdData = useCallback(
     async (signedInUserId: string) => {
       setError(null);
 
       const { data: meRow, error: meError } = await supabase
         .from("users")
-        .select("id, household_id, display_name, created_at")
+        .select("id, active_household_id, display_name, created_at")
         .eq("id", signedInUserId)
         .maybeSingle();
 
       if (meError) {
         setError(meError.message);
         setCurrentUser(null);
-        setMembers([]);
-        setExpenses([]);
-        setOwnsHousehold(false);
-        setHousehold(null);
+        setMyHouseholds([]);
+        setActiveHouseholdId(null);
+        resetHouseholdState();
         return;
       }
 
       if (!meRow) {
-        // No profile yet. Check whether the user has a pending join request.
         setCurrentUser(null);
-        setMembers([]);
-        setExpenses([]);
-        setOwnsHousehold(false);
-        setHousehold(null);
+        setMyHouseholds([]);
+        setActiveHouseholdId(null);
+        resetHouseholdState();
 
         const { data: pendingRows, error: pendingError } = await supabase
           .from("household_join_requests")
@@ -192,68 +497,77 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const me = meRow as Member;
+      const me = normalizeMember(meRow as Record<string, unknown>);
       setCurrentUser(me);
       setPendingRequest(null);
 
-      const [
-        { data: memberRows, error: membersError },
-        { data: expenseRows, error: expensesError },
-        { data: householdRow, error: householdError },
-      ] = await Promise.all([
-        supabase
-          .from("users")
-          .select("id, household_id, display_name, created_at")
-          .eq("household_id", me.household_id)
-          .order("created_at", { ascending: true }),
-        supabase
-          .from("expenses")
-          .select("id, household_id, user_id, amount, category, date, note, is_joint")
-          .eq("household_id", me.household_id)
-          .order("date", { ascending: false }),
-        supabase
-          .from("households")
-          .select("id, name, created_by")
-          .eq("id", me.household_id)
-          .maybeSingle(),
-      ]);
+      // Fetch every household the user belongs to.
+      const { data: householdRows, error: myHouseholdsError } = await supabase
+        .from("household_members")
+        .select("household:households(id, name, created_by)")
+        .eq("user_id", signedInUserId);
 
-      if (membersError) {
-        setError(membersError.message);
-        setMembers([]);
+      let resolvedHouseholds: Household[] = [];
+      if (myHouseholdsError) {
+        setError(myHouseholdsError.message);
+        setMyHouseholds([]);
       } else {
-        setMembers((memberRows ?? []) as Member[]);
-      }
-
-      if (expensesError) {
-        setError((prev) => prev ?? expensesError.message);
-        setExpenses([]);
-      } else {
-        setExpenses(
-          (expenseRows ?? []).map((row) =>
-            normalizeExpense(row as Record<string, unknown>),
-          ),
-        );
-      }
-
-      if (!householdError && householdRow) {
-        const row = householdRow as {
-          id: string;
-          name: string;
-          created_by: string | null;
+        type HouseholdEnvelope = {
+          household:
+            | Record<string, unknown>
+            | Record<string, unknown>[]
+            | null;
         };
-        setHousehold({
-          id: row.id,
-          name: row.name,
-          created_by: row.created_by,
-        });
-        setOwnsHousehold(row.created_by === signedInUserId);
-      } else {
-        setHousehold(null);
-        setOwnsHousehold(false);
+        const rows = (householdRows ?? []) as HouseholdEnvelope[];
+        resolvedHouseholds = rows
+          .map((row) =>
+            Array.isArray(row.household)
+              ? row.household[0] ?? null
+              : row.household,
+          )
+          .filter((h): h is Record<string, unknown> => h != null)
+          .map((h) => normalizeHousehold(h))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setMyHouseholds(resolvedHouseholds);
       }
+
+      // Decide which household is active. Prefer the user's stored choice,
+      // but fall back to the first membership and persist that choice.
+      let nextActiveId = me.active_household_id;
+      if (
+        nextActiveId &&
+        resolvedHouseholds.length > 0 &&
+        !resolvedHouseholds.some((h) => h.id === nextActiveId)
+      ) {
+        // Their stored "active" no longer matches any membership (e.g. they
+        // were removed from a household). Pick the first available one.
+        nextActiveId = resolvedHouseholds[0].id;
+      }
+      if (!nextActiveId && resolvedHouseholds.length > 0) {
+        nextActiveId = resolvedHouseholds[0].id;
+      }
+
+      if (nextActiveId && nextActiveId !== me.active_household_id) {
+        const { error: switchError } = await supabase.rpc(
+          "switch_active_household",
+          { p_household_id: nextActiveId },
+        );
+        if (!switchError) {
+          setCurrentUser({ ...me, active_household_id: nextActiveId });
+        }
+      }
+
+      setActiveHouseholdId(nextActiveId);
+
+      if (!nextActiveId) {
+        // User has no memberships yet — nothing to load.
+        resetHouseholdState();
+        return;
+      }
+
+      await loadActiveHouseholdData(nextActiveId, signedInUserId);
     },
-    [supabase],
+    [supabase, loadActiveHouseholdData, resetHouseholdState],
   );
 
   useEffect(() => {
@@ -265,20 +579,45 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       if (cancelled) return;
 
       if (sessionError) {
+        if (isStaleRefreshSessionError(sessionError)) {
+          await clearStaleAuthSession(supabase);
+          if (cancelled) return;
+          setError(null);
+          setAuthUserId(null);
+          setCurrentUser(null);
+          setMyHouseholds([]);
+          setActiveHouseholdId(null);
+          resetHouseholdState();
+          setPendingRequest(null);
+          setNotifications([]);
+          setLoading(false);
+          return;
+        }
         setError(sessionError.message);
       }
 
-      const userId = data.session?.user.id ?? null;
+      let userId = data.session?.user.id ?? null;
+
+      if (userId) {
+        const { error: userError } = await supabase.auth.getUser();
+        if (cancelled) return;
+        if (userError && isStaleRefreshSessionError(userError)) {
+          await clearStaleAuthSession(supabase);
+          if (cancelled) return;
+          setError(null);
+          userId = null;
+        }
+      }
+
       setAuthUserId(userId);
 
       if (!userId) {
         setCurrentUser(null);
-        setMembers([]);
-        setExpenses([]);
+        setMyHouseholds([]);
+        setActiveHouseholdId(null);
+        resetHouseholdState();
         setPendingRequest(null);
         setNotifications([]);
-        setOwnsHousehold(false);
-        setHousehold(null);
         setLoading(false);
         return;
       }
@@ -295,12 +634,11 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
       if (!userId) {
         setCurrentUser(null);
-        setMembers([]);
-        setExpenses([]);
+        setMyHouseholds([]);
+        setActiveHouseholdId(null);
+        resetHouseholdState();
         setPendingRequest(null);
         setNotifications([]);
-        setOwnsHousehold(false);
-        setHousehold(null);
         setError(null);
         setLoading(false);
         return;
@@ -316,7 +654,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       sub.subscription.unsubscribe();
     };
-  }, [supabase, loadHouseholdData]);
+  }, [supabase, loadHouseholdData, resetHouseholdState]);
 
   useEffect(() => {
     if (!authUserId) return;
@@ -350,6 +688,43 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     }
   }, [authUserId, loadHouseholdData, refreshNotifications]);
+
+  const switchHousehold = useCallback(
+    async (newHouseholdId: string) => {
+      if (!authUserId) return;
+      if (!myHouseholds.some((h) => h.id === newHouseholdId)) {
+        throw new Error("Cannot switch to a household you don't belong to.");
+      }
+      if (newHouseholdId === activeHouseholdId) return;
+
+      const { error: rpcError } = await supabase.rpc(
+        "switch_active_household",
+        { p_household_id: newHouseholdId },
+      );
+      if (rpcError) {
+        throw new Error(rpcError.message);
+      }
+
+      setActiveHouseholdId(newHouseholdId);
+      setCurrentUser((prev) =>
+        prev ? { ...prev, active_household_id: newHouseholdId } : prev,
+      );
+
+      setLoading(true);
+      try {
+        await loadActiveHouseholdData(newHouseholdId, authUserId);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      supabase,
+      authUserId,
+      activeHouseholdId,
+      myHouseholds,
+      loadActiveHouseholdData,
+    ],
+  );
 
   const markNotificationRead = useCallback(
     async (id: string) => {
@@ -389,24 +764,45 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     [supabase, refresh],
   );
 
+  const renameHousehold = useCallback(
+    async (newName: string) => {
+      const { error: rpcError } = await supabase.rpc("rename_household", {
+        p_name: newName,
+      });
+      if (rpcError) throw new Error(rpcError.message);
+      await refresh();
+    },
+    [supabase, refresh],
+  );
+
+  const deleteActiveHousehold = useCallback(async () => {
+    const { error: rpcError } = await supabase.rpc("delete_active_household");
+    if (rpcError) throw new Error(rpcError.message);
+    await refresh();
+  }, [supabase, refresh]);
+
   const addExpense = useCallback(
     async (input: NewExpenseInput) => {
-      if (!currentUser) {
-        throw new Error("Cannot add expense: no signed-in member.");
+      if (!currentUser || !activeHouseholdId) {
+        throw new Error("Cannot add expense: no active household.");
       }
 
       const { data, error: insertError } = await supabase
         .from("expenses")
         .insert({
-          household_id: currentUser.household_id,
+          household_id: activeHouseholdId,
           user_id: input.user_id,
           amount: input.amount,
+          main_category: input.main_category,
+          sub_category: input.sub_category,
           category: input.category,
           date: input.date,
           note: input.note,
           is_joint: input.is_joint,
         })
-        .select("id, household_id, user_id, amount, category, date, note, is_joint")
+        .select(
+          "id, household_id, user_id, amount, main_category, sub_category, category, date, note, is_joint",
+        )
         .single();
 
       if (insertError || !data) {
@@ -416,7 +812,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       const inserted = normalizeExpense(data as Record<string, unknown>);
       setExpenses((prev) => [inserted, ...prev]);
     },
-    [supabase, currentUser],
+    [supabase, currentUser, activeHouseholdId],
   );
 
   const deleteExpense = useCallback(
@@ -433,9 +829,226 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     [supabase],
   );
 
+  const updateBudget = useCallback(
+    async (category: string, limitAmount: number) => {
+      if (!activeHouseholdId) {
+        throw new Error("Cannot update budget: no active household.");
+      }
+      if (!Number.isFinite(limitAmount) || limitAmount < 0) {
+        throw new Error("Limit must be a non-negative number.");
+      }
+
+      const { data, error: upsertError } = await supabase
+        .from("budgets")
+        .upsert(
+          {
+            household_id: activeHouseholdId,
+            category,
+            limit_amount: limitAmount,
+          },
+          { onConflict: "household_id,category" },
+        )
+        .select("id, household_id, category, limit_amount")
+        .single();
+
+      if (upsertError || !data) {
+        throw new Error(upsertError?.message ?? "Failed to update budget.");
+      }
+
+      const upserted = normalizeBudget(data as Record<string, unknown>);
+      setBudgets((prev) => {
+        const without = prev.filter((b) => b.category !== upserted.category);
+        return [...without, upserted];
+      });
+    },
+    [supabase, activeHouseholdId],
+  );
+
+  const createRecurringExpense = useCallback(
+    async (input: NewRecurringExpenseInput) => {
+      if (!currentUser || !activeHouseholdId) {
+        throw new Error(
+          "Cannot create recurring expense: no active household.",
+        );
+      }
+
+      const nextProcessMonth =
+        input.next_process_month ?? addOneMonth(getCurrentMonth());
+
+      const { data, error: insertError } = await supabase
+        .from("recurring_expenses")
+        .insert({
+          household_id: activeHouseholdId,
+          user_id: input.user_id,
+          amount: input.amount,
+          main_category: input.main_category,
+          sub_category: input.sub_category,
+          category: input.category,
+          note: input.note,
+          is_joint: input.is_joint,
+          next_process_month: nextProcessMonth,
+        })
+        .select(
+          "id, household_id, user_id, amount, main_category, sub_category, category, note, is_joint, next_process_month",
+        )
+        .single();
+
+      if (insertError || !data) {
+        throw new Error(
+          insertError?.message ?? "Failed to create recurring expense.",
+        );
+      }
+
+      const inserted = normalizeRecurringExpense(
+        data as Record<string, unknown>,
+      );
+      setRecurringExpenses((prev) =>
+        [...prev, inserted].sort((a, b) =>
+          a.next_process_month.localeCompare(b.next_process_month),
+        ),
+      );
+    },
+    [supabase, currentUser, activeHouseholdId],
+  );
+
+  const deleteRecurringExpense = useCallback(
+    async (id: string) => {
+      const { error: deleteError } = await supabase
+        .from("recurring_expenses")
+        .delete()
+        .eq("id", id);
+      if (deleteError) {
+        throw new Error(deleteError.message);
+      }
+      setRecurringExpenses((prev) => prev.filter((row) => row.id !== id));
+    },
+    [supabase],
+  );
+
+  const processRecurringExpenses =
+    useCallback(async (): Promise<ProcessRecurringResult> => {
+      if (!currentUser || !activeHouseholdId) {
+        throw new Error(
+          "Cannot process recurring expenses: no active household.",
+        );
+      }
+
+      const currentMonth = getCurrentMonth();
+      const today = getTodayDate();
+
+      const due = recurringExpenses.filter(
+        (template) => template.next_process_month <= currentMonth,
+      );
+
+      if (due.length === 0) {
+        return { processedCount: 0 };
+      }
+
+      const expenseRows = due.map((template) => ({
+        household_id: activeHouseholdId,
+        user_id: template.user_id,
+        amount: template.amount,
+        main_category: template.main_category,
+        sub_category: template.sub_category,
+        category: template.category,
+        date: today,
+        note: template.note,
+        is_joint: template.is_joint,
+      }));
+
+      const { error: insertError } = await supabase
+        .from("expenses")
+        .insert(expenseRows);
+      if (insertError) {
+        throw new Error(insertError.message);
+      }
+
+      // Advance each due template by one month. Sequential is fine here:
+      // each row has its own next_process_month and N is small.
+      for (const template of due) {
+        const advanced = addOneMonth(template.next_process_month);
+        const { error: updateError } = await supabase
+          .from("recurring_expenses")
+          .update({ next_process_month: advanced })
+          .eq("id", template.id);
+        if (updateError) {
+          throw new Error(updateError.message);
+        }
+      }
+
+      // Re-fetch so the UI (including dashboard expenses) updates instantly.
+      await loadActiveHouseholdData(activeHouseholdId, currentUser.id);
+
+      return { processedCount: due.length };
+    }, [
+      supabase,
+      currentUser,
+      activeHouseholdId,
+      recurringExpenses,
+      loadActiveHouseholdData,
+    ]);
+
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
   }, [supabase]);
+
+  const upsertSubcategoryBudget = useCallback(
+    async (mainCategory: string, subCategory: string, limitAmount: number) => {
+      if (!Number.isFinite(limitAmount) || limitAmount < 0) {
+        throw new Error("Limit must be a non-negative number.");
+      }
+      const { data, error: rpcError } = await supabase.rpc(
+        "upsert_subcategory_budget",
+        {
+          p_main_category: mainCategory,
+          p_sub_category: subCategory,
+          p_limit_amount: limitAmount,
+        },
+      );
+      if (rpcError) {
+        throw new Error(rpcError.message);
+      }
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) return;
+      const upserted = normalizeSubcategoryBudget(row as Record<string, unknown>);
+      setSubcategoryBudgets((prev) => {
+        const without = prev.filter(
+          (b) =>
+            !(
+              b.main_category === upserted.main_category &&
+              b.sub_category === upserted.sub_category
+            ),
+        );
+        return [...without, upserted].sort((a, b) =>
+          a.main_category === b.main_category
+            ? a.sub_category.localeCompare(b.sub_category)
+            : a.main_category.localeCompare(b.main_category),
+        );
+      });
+    },
+    [supabase],
+  );
+
+  const deleteSubcategoryBudget = useCallback(
+    async (mainCategory: string, subCategory: string) => {
+      const { error: rpcError } = await supabase.rpc("delete_subcategory_budget", {
+        p_main_category: mainCategory,
+        p_sub_category: subCategory,
+      });
+      if (rpcError) {
+        throw new Error(rpcError.message);
+      }
+      setSubcategoryBudgets((prev) =>
+        prev.filter(
+          (b) =>
+            !(
+              b.main_category === mainCategory && b.sub_category === subCategory
+            ),
+        ),
+      );
+    },
+    [supabase],
+  );
 
   const unreadNotificationCount = useMemo(
     () => notifications.filter((n) => !n.is_read).length,
@@ -448,6 +1061,8 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       members,
       currentUser,
       household,
+      myHouseholds,
+      activeHouseholdId,
       selectedMonth,
       loading,
       error,
@@ -456,6 +1071,9 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       notifications,
       unreadNotificationCount,
       ownsHousehold,
+      budgets,
+      subcategoryBudgets,
+      recurringExpenses,
       addExpense,
       deleteExpense,
       setSelectedMonth,
@@ -465,12 +1083,23 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       markNotificationRead,
       approveJoinRequest,
       rejectJoinRequest,
+      renameHousehold,
+      deleteActiveHousehold,
+      updateBudget,
+      upsertSubcategoryBudget,
+      deleteSubcategoryBudget,
+      createRecurringExpense,
+      deleteRecurringExpense,
+      processRecurringExpenses,
+      switchHousehold,
     }),
     [
       expenses,
       members,
       currentUser,
       household,
+      myHouseholds,
+      activeHouseholdId,
       selectedMonth,
       loading,
       error,
@@ -479,6 +1108,9 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       notifications,
       unreadNotificationCount,
       ownsHousehold,
+      budgets,
+      subcategoryBudgets,
+      recurringExpenses,
       addExpense,
       deleteExpense,
       signOut,
@@ -487,6 +1119,15 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       markNotificationRead,
       approveJoinRequest,
       rejectJoinRequest,
+      renameHousehold,
+      deleteActiveHousehold,
+      updateBudget,
+      upsertSubcategoryBudget,
+      deleteSubcategoryBudget,
+      createRecurringExpense,
+      deleteRecurringExpense,
+      processRecurringExpenses,
+      switchHousehold,
     ],
   );
 

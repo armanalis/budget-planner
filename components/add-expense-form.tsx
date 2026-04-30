@@ -4,13 +4,13 @@ import { useState } from "react";
 import type { NewExpenseInput } from "@/types";
 import { useExpenses } from "@/context/ExpenseContext";
 import {
-  CATEGORY_TO_I18N_KEY,
-  EXPENSE_CATEGORY_ENGLISH,
+  MAIN_CATEGORY_ENGLISH,
+  translateMainCategory,
   useLanguage,
-  type ExpenseCategoryEnglish,
+  type MainCategoryEnglish,
 } from "@/context/LanguageContext";
 
-const DEFAULT_CATEGORY: ExpenseCategoryEnglish = EXPENSE_CATEGORY_ENGLISH[0];
+const DEFAULT_MAIN_CATEGORY: MainCategoryEnglish = MAIN_CATEGORY_ENGLISH[0];
 
 const JOINT_OPTION_VALUE = "__joint__";
 
@@ -33,20 +33,31 @@ export default function AddExpenseForm({
   isFetchingLiveRate,
   isUsingFallbackRate,
 }: AddExpenseFormProps) {
-  const { addExpense, currentUser, members } = useExpenses();
+  const {
+    addExpense,
+    createRecurringExpense,
+    currentUser,
+    members,
+    subcategoryBudgets,
+  } = useExpenses();
   const { t } = useLanguage();
 
   const [amount, setAmount] = useState("");
   const [ledger, setLedger] = useState<string>(() => currentUser?.id ?? "");
-  const [category, setCategory] =
-    useState<ExpenseCategoryEnglish>(DEFAULT_CATEGORY);
+  const [mainCategory, setMainCategory] =
+    useState<MainCategoryEnglish>(DEFAULT_MAIN_CATEGORY);
+  const [subCategory, setSubCategory] = useState("");
   const [date, setDate] = useState<string>(() => getTodayDate());
   const [note, setNote] = useState("");
   const [currency, setCurrency] = useState<Currency>("EUR");
+  const [makeRecurring, setMakeRecurring] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const displayedExchangeRate = liveExchangeRate.toFixed(2);
+  const subcategoryOptions = subcategoryBudgets
+    .filter((row) => row.main_category === mainCategory)
+    .sort((a, b) => a.sub_category.localeCompare(b.sub_category));
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -75,10 +86,16 @@ export default function AddExpenseForm({
 
     const isJoint = ledger === JOINT_OPTION_VALUE;
     const userId = isJoint ? currentUser.id : ledger || currentUser.id;
+    const normalizedSubCategory = subCategory.trim();
+    const resolvedSubCategory =
+      normalizedSubCategory.length > 0 ? normalizedSubCategory : null;
+    const storedCategory = resolvedSubCategory ?? mainCategory;
 
     const input: NewExpenseInput = {
       amount: finalAmount,
-      category,
+      main_category: mainCategory,
+      sub_category: resolvedSubCategory,
+      category: storedCategory,
       date,
       note: mergedNote,
       user_id: userId,
@@ -90,12 +107,24 @@ export default function AddExpenseForm({
       setSubmitError(null);
       await addExpense(input);
 
+      if (makeRecurring) {
+        await createRecurringExpense({
+          user_id: input.user_id,
+          amount: input.amount,
+          category: input.category,
+          note: input.note,
+          is_joint: input.is_joint,
+        });
+      }
+
       setAmount("");
       setLedger(currentUser.id);
-      setCategory(EXPENSE_CATEGORY_ENGLISH[0]);
+      setMainCategory(DEFAULT_MAIN_CATEGORY);
+      setSubCategory("");
       setDate(getTodayDate());
       setNote("");
       setCurrency("EUR");
+      setMakeRecurring(false);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -184,21 +213,54 @@ export default function AddExpenseForm({
 
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
-            {t("category")}
+            {t("expenseMainCategory")}
           </span>
           <select
-            value={category}
+            value={mainCategory}
             onChange={(event) =>
-              setCategory(event.target.value as ExpenseCategoryEnglish)
+              setMainCategory(event.target.value as MainCategoryEnglish)
             }
             className={inputClassName}
           >
-            {EXPENSE_CATEGORY_ENGLISH.map((option) => (
+            {MAIN_CATEGORY_ENGLISH.map((option) => (
               <option key={option} value={option}>
-                {t(CATEGORY_TO_I18N_KEY[option])}
+                {translateMainCategory(t, option)}
               </option>
             ))}
           </select>
+        </label>
+
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
+            {t("expenseSubCategory")}
+          </span>
+          {subcategoryOptions.length > 0 ? (
+            <select
+              value={subCategory}
+              onChange={(event) => setSubCategory(event.target.value)}
+              className={inputClassName}
+            >
+              <option value="">{t("expenseNoSubcategory")}</option>
+              {subcategoryOptions.map((option) => (
+                <option key={option.id} value={option.sub_category}>
+                  {option.sub_category}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <>
+              <input
+                type="text"
+                value={subCategory}
+                onChange={(event) => setSubCategory(event.target.value)}
+                placeholder={t("expenseNoSubcategory")}
+                className={inputClassName}
+              />
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                {t("expenseSubcategoryOptional")}
+              </p>
+            </>
+          )}
         </label>
 
         <label className="block">
@@ -225,6 +287,18 @@ export default function AddExpenseForm({
             placeholder={t("notePlaceholder")}
             className={inputClassName}
           />
+        </label>
+
+        <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-800/40">
+          <input
+            type="checkbox"
+            checked={makeRecurring}
+            onChange={(event) => setMakeRecurring(event.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800"
+          />
+          <span className="text-sm text-slate-700 dark:text-slate-200">
+            {t("recurringMakeMonthly")}
+          </span>
         </label>
       </div>
 

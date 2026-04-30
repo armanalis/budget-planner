@@ -5,17 +5,21 @@ import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
   Bell,
+  Check,
   ChartColumnBig,
+  ChevronDown,
   CirclePlus,
   HandCoins,
   LogOut,
+  MessageCircle,
   Moon,
+  Plus,
   RefreshCcw,
   Settings,
   Sun,
   Users,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useExpenses } from "@/context/ExpenseContext";
 import { createClient } from "@/utils/supabase/client";
 import {
@@ -56,6 +60,18 @@ const navItems: NavItem[] = [
     titleKey: "jointAccountTitle",
     icon: HandCoins,
   },
+  {
+    href: "/messages",
+    labelKey: "navMessages",
+    titleKey: "messagesTitle",
+    icon: MessageCircle,
+  },
+  {
+    href: "/settings",
+    labelKey: "navSettings",
+    titleKey: "settingsTitle",
+    icon: Settings,
+  },
 ];
 
 const pathTitleKeys: Record<string, TranslationKey> = {
@@ -63,8 +79,10 @@ const pathTitleKeys: Record<string, TranslationKey> = {
   "/add": "navAddEntry",
   "/members": "membersTitle",
   "/joint-account": "jointAccountTitle",
+  "/messages": "messagesTitle",
   "/notifications": "notificationsTitle",
   "/settings": "settingsTitle",
+  "/onboarding": "onboardingTitle",
 };
 
 function getPageTitleKey(pathname: string): TranslationKey {
@@ -81,8 +99,148 @@ function isNavItemActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
   if (href === "/members") return pathname.startsWith("/members");
   if (href === "/notifications") return pathname.startsWith("/notifications");
+  if (href === "/messages") return pathname.startsWith("/messages");
   if (href === "/settings") return pathname.startsWith("/settings");
   return pathname === href;
+}
+
+function HouseholdSwitcher({ variant = "sidebar" }: { variant?: "sidebar" | "header" }) {
+  const { t } = useLanguage();
+  const { household, myHouseholds, activeHouseholdId, switchHousehold } =
+    useExpenses();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClick(event: MouseEvent) {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const activeName =
+    household?.name ??
+    myHouseholds.find((h) => h.id === activeHouseholdId)?.name ??
+    "";
+
+  async function handleSelect(id: string) {
+    if (id === activeHouseholdId) {
+      setOpen(false);
+      return;
+    }
+    setBusy(true);
+    try {
+      await switchHousehold(id);
+      setOpen(false);
+    } catch {
+      // The error already surfaces via the context.
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const buttonClass =
+    variant === "sidebar"
+      ? "flex w-full items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-left transition hover:bg-slate-100 dark:border-gray-800 dark:bg-gray-800/60 dark:hover:bg-gray-800"
+      : "flex max-w-[10rem] items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 transition hover:bg-slate-50 dark:border-gray-700 dark:bg-gray-800 dark:text-slate-200 dark:hover:bg-gray-700";
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        disabled={busy}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={t("switchHousehold")}
+        className={buttonClass}
+      >
+        {variant === "sidebar" ? (
+          <span className="min-w-0 flex-1">
+            <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              {t("householdLabel")}
+            </span>
+            <span className="block truncate text-sm font-medium text-slate-800 dark:text-slate-100">
+              {activeName || "—"}
+            </span>
+          </span>
+        ) : (
+          <span className="truncate font-medium">{activeName || "—"}</span>
+        )}
+        <ChevronDown className="h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400" />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className={`absolute z-30 mt-1 ${variant === "sidebar" ? "left-0 right-0" : "right-0 w-56"} overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900`}
+        >
+          <ul className="max-h-64 overflow-y-auto py-1">
+            {myHouseholds.length === 0 && (
+              <li className="px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
+                —
+              </li>
+            )}
+            {myHouseholds.map((h) => {
+              const isActive = h.id === activeHouseholdId;
+              return (
+                <li key={h.id}>
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={isActive}
+                    onClick={() => handleSelect(h.id)}
+                    className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition ${
+                      isActive
+                        ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                        : "text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-gray-800"
+                    }`}
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      {isActive ? (
+                        <Check className="h-4 w-4 shrink-0" aria-hidden />
+                      ) : (
+                        <span className="inline-block h-4 w-4 shrink-0" />
+                      )}
+                      <span className="truncate">{h.name}</span>
+                    </span>
+                    {isActive && (
+                      <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                        {t("activeBadge")}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="border-t border-slate-200 dark:border-gray-700">
+            <Link
+              href="/onboarding"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-gray-800"
+            >
+              <Plus className="h-4 w-4" aria-hidden />
+              {t("createOrJoinAnother")}
+            </Link>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function HeaderControls() {
@@ -155,24 +313,6 @@ function NotificationBell() {
           {unreadNotificationCount > 9 ? "9+" : unreadNotificationCount}
         </span>
       )}
-    </Link>
-  );
-}
-
-function SettingsButton() {
-  const { t } = useLanguage();
-  const pathname = usePathname();
-  const isActive = pathname.startsWith("/settings");
-
-  return (
-    <Link
-      href="/settings"
-      aria-label={t("settingsTitle")}
-      className={`relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition dark:border-gray-700 dark:bg-gray-800 dark:text-slate-200 ${
-        isActive ? "ring-2 ring-blue-500" : ""
-      }`}
-    >
-      <Settings className="h-4 w-4" aria-hidden />
     </Link>
   );
 }
@@ -340,7 +480,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const {
     currentUser,
-    household,
     selectedMonth,
     setSelectedMonth,
     signOut,
@@ -382,16 +521,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <p className="text-base font-semibold text-slate-900 dark:text-white">
             {t("appTitle")}
           </p>
-          {household && (
-            <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-gray-800 dark:bg-gray-800/60">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                {t("householdLabel")}
-              </p>
-              <p className="break-words text-sm font-medium text-slate-800 dark:text-slate-100">
-                {household.name}
-              </p>
-            </div>
-          )}
+          <div className="mt-2">
+            <HouseholdSwitcher variant="sidebar" />
+          </div>
           <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
             {currentUser.display_name}
           </p>
@@ -436,19 +568,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 )}
               </Link>
             </li>
-            <li>
-              <Link
-                href="/settings"
-                className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
-                  isNavItemActive(pathname, "/settings")
-                    ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                    : "text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-gray-800"
-                }`}
-              >
-                <Settings className="h-4 w-4" aria-hidden />
-                <span>{t("navSettings")}</span>
-              </Link>
-            </li>
           </ul>
         </nav>
 
@@ -487,16 +606,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <h1 className="truncate text-base font-semibold text-slate-900 dark:text-white">
                 {activeTitle}
               </h1>
-              {household && (
-                <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
-                  {t("householdLabel")}: {household.name}
-                </p>
-              )}
+              <div className="mt-1">
+                <HouseholdSwitcher variant="header" />
+              </div>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-2">
               <div className="flex items-center gap-2">
                 <NotificationBell />
-                <SettingsButton />
                 <button
                   type="button"
                   onClick={() => signOut()}
@@ -528,10 +644,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <h1 className="text-lg font-semibold text-slate-900 dark:text-white">
               {activeTitle}
             </h1>
-            <div className="flex items-center gap-2">
-              <NotificationBell />
-              <SettingsButton />
-            </div>
+            <NotificationBell />
           </div>
         </header>
 
@@ -545,7 +658,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         aria-label="Primary mobile"
         className="fixed inset-x-0 bottom-0 z-20 mx-auto w-full max-w-md border-t border-slate-200 bg-white dark:border-gray-800 dark:bg-gray-900 md:hidden"
       >
-        <ul className="grid grid-cols-4">
+        <ul className="grid grid-cols-6">
           {navItems.map((item) => {
             const isActive = isNavItemActive(pathname, item.href);
             const Icon = item.icon;

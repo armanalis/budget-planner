@@ -2,8 +2,12 @@
 
 import { useMemo } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import BalancesCard from "@/components/BalancesCard";
+import BudgetProgress from "@/components/BudgetProgress";
+import TrendsChart from "@/components/TrendsChart";
 import { useExpenses } from "@/context/ExpenseContext";
 import { useLanguage } from "@/context/LanguageContext";
+import { useTrends } from "@/hooks/useTrends";
 
 const CHART_COLORS = [
   "#3B82F6",
@@ -109,8 +113,9 @@ function ExpensePieChart({
 }
 
 export default function Home() {
-  const { expenses, currentUser, selectedMonth } = useExpenses();
+  const { expenses, currentUser, selectedMonth, budgets } = useExpenses();
   const { t } = useLanguage();
+  const trendData = useTrends();
   const displayName = currentUser?.display_name ?? "—";
 
   const monthExpenses = useMemo(
@@ -152,6 +157,19 @@ export default function Home() {
     [userTotal, jointTotal],
   );
 
+  const spentByCategory = useMemo(() => {
+    return monthExpenses.reduce<Record<string, number>>((acc, expense) => {
+      acc[expense.main_category] = (acc[expense.main_category] ?? 0) + expense.amount;
+      return acc;
+    }, {});
+  }, [monthExpenses]);
+
+  const activeBudgets = useMemo(
+    () =>
+      [...budgets].sort((a, b) => a.category.localeCompare(b.category)),
+    [budgets],
+  );
+
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:gap-6">
@@ -181,6 +199,29 @@ export default function Home() {
         </section>
       </div>
 
+      <BalancesCard />
+
+      {activeBudgets.length > 0 && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+          <h2 className="text-sm font-semibold text-slate-800 dark:text-white">
+            {t("budgetsTitle")}
+          </h2>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {t("budgetsDashboardSubtitle")}
+          </p>
+          <div className="mt-4 space-y-4">
+            {activeBudgets.map((budget) => (
+              <BudgetProgress
+                key={budget.id}
+                category={budget.category}
+                limit={budget.limit_amount}
+                spent={spentByCategory[budget.category] ?? 0}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6">
         <ExpensePieChart
           title={t("userExpenses", { name: displayName })}
@@ -188,6 +229,15 @@ export default function Home() {
         />
         <ExpensePieChart title={t("jointExpenses")} data={jointChartData} />
       </div>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+        <h2 className="text-sm font-semibold text-slate-800 dark:text-white">
+          {t("trendsTitle")}
+        </h2>
+        <div className="mt-3">
+          <TrendsChart data={trendData} />
+        </div>
+      </section>
     </div>
   );
 }

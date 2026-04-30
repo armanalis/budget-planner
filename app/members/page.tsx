@@ -15,9 +15,12 @@ export default function MembersPage() {
       ? t("membersCount", { count: String(memberCount) })
       : t("membersCountPlural", { count: String(memberCount) });
 
+  const householdName = household?.name?.trim() || "—";
+  const showCard = Boolean(currentUser);
+
   return (
     <div className="space-y-4">
-      {household && (
+      {showCard && (
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
           <div className="flex items-start gap-3">
             <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
@@ -28,7 +31,7 @@ export default function MembersPage() {
                 {t("householdLabel")}
               </p>
               <h2 className="break-words text-lg font-semibold text-slate-900 dark:text-white">
-                {household.name}
+                {householdName}
               </h2>
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                 {countLabel}
