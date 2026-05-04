@@ -4,7 +4,7 @@ import { use } from "react";
 import { Trash2 } from "lucide-react";
 import { useExpenses } from "@/context/ExpenseContext";
 import {
-  translateExpenseCategory,
+  formatExpenseCategoryDisplay,
   useLanguage,
 } from "@/context/LanguageContext";
 
@@ -61,7 +61,7 @@ export default function MemberLedgerPage({
             <article key={expense.id} className={cardClass}>
               <div className="flex items-start justify-between gap-3">
                 <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                  {translateExpenseCategory(t, expense.category)}
+                  {formatExpenseCategoryDisplay(t, expense)}
                 </p>
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-semibold text-blue-600 dark:text-blue-400">
@@ -129,7 +129,7 @@ export default function MemberLedgerPage({
                     )}
                   </td>
                   <td className="px-4 py-3 text-slate-800 dark:text-slate-200">
-                    {translateExpenseCategory(t, expense.category)}
+                    {formatExpenseCategoryDisplay(t, expense)}
                   </td>
                   <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
                     {expense.note || t("noNote")}

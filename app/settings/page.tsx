@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   Download,
@@ -26,8 +27,8 @@ import type {
 } from "@/types";
 import { useExpenses } from "@/context/ExpenseContext";
 import {
+  formatExpenseCategoryDisplay,
   MAIN_CATEGORY_ENGLISH,
-  translateExpenseCategory,
   translateMainCategory,
   useLanguage,
   type MainCategoryEnglish,
@@ -91,11 +92,13 @@ export default function SettingsPage() {
     members,
     budgets,
     subcategoryBudgets,
+    supportsExpenseHierarchy,
+    supportsSubcategoryBudgetTable,
     updateBudget,
     upsertSubcategoryBudget,
     deleteSubcategoryBudget,
     household,
-    ownsHousehold,
+    activeRole,
     renameHousehold,
     deleteActiveHousehold,
     recurringExpenses,
@@ -171,7 +174,7 @@ export default function SettingsPage() {
           {t("settingsHouseholdSubtitle")}
         </p>
 
-        {ownsHousehold ? (
+        {activeRole === "owner" ? (
           <div className="space-y-4">
             <RenameHouseholdForm
               key={household?.name ?? ""}
@@ -193,6 +196,9 @@ export default function SettingsPage() {
             </p>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               {t("settingsHouseholdOwnerOnly")}
+            </p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {t("settingsOnlyOwnersCanDeleteHousehold")}
             </p>
           </div>
         )}
@@ -266,6 +272,8 @@ export default function SettingsPage() {
       <BudgetsSection
         budgets={budgets}
         subcategoryBudgets={subcategoryBudgets}
+        supportsExpenseHierarchy={supportsExpenseHierarchy}
+        supportsSubcategoryBudgetTable={supportsSubcategoryBudgetTable}
         updateBudget={updateBudget}
         upsertSubcategoryBudget={upsertSubcategoryBudget}
         deleteSubcategoryBudget={deleteSubcategoryBudget}
@@ -415,7 +423,7 @@ function RecurringExpenseRow({
     <li className="flex items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
       <div className="min-w-0">
         <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
-          {translateExpenseCategory(t, row.category)}{" "}
+          {formatExpenseCategoryDisplay(t, row)}{" "}
           <span className="font-normal text-slate-500 dark:text-slate-400">
             · €{row.amount.toFixed(2)}
           </span>
@@ -447,12 +455,16 @@ function RecurringExpenseRow({
 function BudgetsSection({
   budgets,
   subcategoryBudgets,
+  supportsExpenseHierarchy,
+  supportsSubcategoryBudgetTable,
   updateBudget,
   upsertSubcategoryBudget,
   deleteSubcategoryBudget,
 }: {
   budgets: Budget[];
   subcategoryBudgets: SubcategoryBudget[];
+  supportsExpenseHierarchy: boolean;
+  supportsSubcategoryBudgetTable: boolean;
   updateBudget: (category: string, limitAmount: number) => Promise<void>;
   upsertSubcategoryBudget: (
     mainCategory: string,
@@ -486,6 +498,9 @@ function BudgetsSection({
     return map;
   }, [subcategoryBudgets]);
 
+  const showSubcategoryBudgetUi =
+    supportsExpenseHierarchy && supportsSubcategoryBudgetTable;
+
   return (
     <section className={cardClass}>
       <header className="flex items-center gap-2">
@@ -497,6 +512,18 @@ function BudgetsSection({
       <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
         {t("budgetsSubtitle")}
       </p>
+
+      {(!supportsExpenseHierarchy || !supportsSubcategoryBudgetTable) && (
+        <div className="mt-3 space-y-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+          {!supportsExpenseHierarchy ? (
+            <p>{t("dbSchemaLegacyExpenseHint")}</p>
+          ) : null}
+          {!supportsSubcategoryBudgetTable ? (
+            <p>{t("settingsSubcategoryBudgetNeedsMigration")}</p>
+          ) : null}
+        </div>
+      )}
+
       <p className="mt-3 text-xs font-medium text-slate-700 dark:text-slate-300">
         {t("budgetMainCategoriesTitle")}
       </p>
@@ -509,6 +536,7 @@ function BudgetsSection({
               category={category}
               existing={budgetByCategory.get(category)}
               subcategoryRows={subByMain.get(category) ?? []}
+              showSubcategoryBudgetUi={showSubcategoryBudgetUi}
               updateBudget={updateBudget}
               upsertSubcategoryBudget={upsertSubcategoryBudget}
               deleteSubcategoryBudget={deleteSubcategoryBudget}
@@ -524,6 +552,7 @@ function BudgetRow({
   category,
   existing,
   subcategoryRows,
+  showSubcategoryBudgetUi,
   updateBudget,
   upsertSubcategoryBudget,
   deleteSubcategoryBudget,
@@ -531,6 +560,7 @@ function BudgetRow({
   category: MainCategoryEnglish;
   existing: Budget | undefined;
   subcategoryRows: SubcategoryBudget[];
+  showSubcategoryBudgetUi: boolean;
   updateBudget: (category: string, limitAmount: number) => Promise<void>;
   upsertSubcategoryBudget: (
     mainCategory: string,
@@ -651,6 +681,7 @@ function BudgetRow({
         </p>
       )}
 
+      {showSubcategoryBudgetUi ? (
       <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-gray-700 dark:bg-gray-800/40">
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
@@ -735,6 +766,7 @@ function BudgetRow({
           </p>
         )}
       </div>
+      ) : null}
     </div>
   );
 }
@@ -1005,24 +1037,31 @@ function RenameHouseholdForm({
 function DeleteHouseholdForm({
   deleteActiveHousehold,
 }: {
-  deleteActiveHousehold: () => Promise<void>;
+  deleteActiveHousehold: () => Promise<number>;
 }) {
   const { t } = useLanguage();
+  const router = useRouter();
   const [confirmValue, setConfirmValue] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const canDelete = confirmValue.trim().toUpperCase() === "DELETE";
 
   const handleDelete = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setErrorMessage(null);
+    setSuccessMessage(null);
     if (!canDelete) return;
 
     setSubmitting(true);
     try {
-      await deleteActiveHousehold();
+      const remaining = await deleteActiveHousehold();
       setConfirmValue("");
+      setSuccessMessage(t("householdDeletedSuccessfully"));
+      if (remaining === 0) {
+        router.push("/onboarding");
+      }
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : t("settingsDeleteHouseholdFailed"),
@@ -1037,7 +1076,10 @@ function DeleteHouseholdForm({
       onSubmit={handleDelete}
       className="rounded-lg border border-red-300/60 bg-red-50/70 p-3 dark:border-red-900/60 dark:bg-red-950/20"
     >
-      <p className="text-xs text-red-700 dark:text-red-300">
+      <p className="text-sm font-semibold text-red-800 dark:text-red-200">
+        {t("deleteHousehold")}
+      </p>
+      <p className="mt-1 text-xs text-red-700 dark:text-red-300">
         {t("settingsDeleteHouseholdWarning")}
       </p>
       <p className="mt-2 text-xs font-medium text-red-700 dark:text-red-300">
@@ -1059,6 +1101,11 @@ function DeleteHouseholdForm({
       {errorMessage && (
         <p className="mt-2 text-xs font-medium text-red-600 dark:text-red-400">
           {errorMessage}
+        </p>
+      )}
+      {successMessage && (
+        <p className="mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+          {successMessage}
         </p>
       )}
 

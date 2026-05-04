@@ -73,6 +73,10 @@ type ExpenseContextValue = {
   ownsHousehold: boolean;
   budgets: Budget[];
   subcategoryBudgets: SubcategoryBudget[];
+  /** False when `expenses` / `recurring_expenses` rows lack main/sub columns (run latest SQL). */
+  supportsExpenseHierarchy: boolean;
+  /** False when `subcategory_budgets` table is missing. */
+  supportsSubcategoryBudgetTable: boolean;
   recurringExpenses: RecurringExpense[];
   addExpense: (input: NewExpenseInput) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
@@ -84,7 +88,8 @@ type ExpenseContextValue = {
   approveJoinRequest: (requestId: string) => Promise<void>;
   rejectJoinRequest: (requestId: string) => Promise<void>;
   renameHousehold: (newName: string) => Promise<void>;
-  deleteActiveHousehold: () => Promise<void>;
+  /** Deletes active household (owners only). Returns remaining membership count for this user. */
+  deleteActiveHousehold: () => Promise<number>;
   updateBudget: (category: string, limitAmount: number) => Promise<void>;
   upsertSubcategoryBudget: (
     mainCategory: string,
@@ -100,6 +105,8 @@ type ExpenseContextValue = {
   processRecurringExpenses: () => Promise<ProcessRecurringResult>;
   /** Switch the active household to one the user already belongs to. */
   switchHousehold: (newHouseholdId: string) => Promise<void>;
+  /** Role in the active household (`household_members.role`). */
+  activeRole: "owner" | "member" | null;
 };
 
 function getCurrentMonth() {
@@ -115,6 +122,45 @@ function addOneMonth(yyyymm: string): string {
   if (!y || !m) return yyyymm;
   const next = new Date(Date.UTC(y, m, 1));
   return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+const EXPENSE_SELECT_HIERARCHY =
+  "id, household_id, user_id, amount, main_category, sub_category, category, date, note, is_joint";
+
+const EXPENSE_SELECT_LEGACY =
+  "id, household_id, user_id, amount, category, date, note, is_joint";
+
+const RECURRING_SELECT_HIERARCHY =
+  "id, household_id, user_id, amount, main_category, sub_category, category, note, is_joint, next_process_month";
+
+const RECURRING_SELECT_LEGACY =
+  "id, household_id, user_id, amount, category, note, is_joint, next_process_month";
+
+/** PostgREST / schema-cache messages when columns or tables were not migrated yet. */
+function isExpenseHierarchySchemaError(message?: string | null): boolean {
+  const m = (message ?? "").toLowerCase();
+  return (
+    (m.includes("main_category") || m.includes("sub_category")) &&
+    m.includes("expenses") &&
+    (m.includes("schema cache") || m.includes("could not find"))
+  );
+}
+
+function isRecurringHierarchySchemaError(message?: string | null): boolean {
+  const m = (message ?? "").toLowerCase();
+  return (
+    (m.includes("main_category") || m.includes("sub_category")) &&
+    m.includes("recurring_expenses") &&
+    (m.includes("schema cache") || m.includes("could not find"))
+  );
+}
+
+function isSubcategoryBudgetsSchemaError(message?: string | null): boolean {
+  const m = (message ?? "").toLowerCase();
+  return (
+    m.includes("subcategory_budgets") &&
+    (m.includes("schema cache") || m.includes("could not find"))
+  );
 }
 
 function normalizeExpense(row: Record<string, unknown>): Expense {
@@ -252,11 +298,16 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   const [subcategoryBudgets, setSubcategoryBudgets] = useState<
     SubcategoryBudget[]
   >([]);
+  const [supportsExpenseHierarchy, setSupportsExpenseHierarchy] =
+    useState<boolean>(true);
+  const [supportsSubcategoryBudgetTable, setSupportsSubcategoryBudgetTable] =
+    useState<boolean>(true);
   const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpense[]>(
     [],
   );
   const [myHouseholds, setMyHouseholds] = useState<Household[]>([]);
   const [activeHouseholdId, setActiveHouseholdId] = useState<string | null>(null);
+  const [activeRole, setActiveRole] = useState<"owner" | "member" | null>(null);
 
   const refreshNotifications = useCallback(async () => {
     if (!authUserId) {
@@ -288,6 +339,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     setSubcategoryBudgets([]);
     setRecurringExpenses([]);
     setOwnsHousehold(false);
+    setActiveRole(null);
   }, []);
 
   /**
@@ -300,11 +352,9 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     async (householdId: string, signedInUserId: string) => {
       const [
         { data: memberRows, error: membersError },
-        { data: expenseRows, error: expensesError },
         { data: householdRpcRows, error: householdRpcError },
         { data: budgetRows, error: budgetsError },
-        { data: subcategoryRows, error: subcategoryError },
-        { data: recurringRows, error: recurringError },
+        { data: myMembershipRow, error: myMembershipError },
       ] = await Promise.all([
         supabase
           .from("household_members")
@@ -312,30 +362,109 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
             "user:users(id, active_household_id, display_name, created_at)",
           )
           .eq("household_id", householdId),
-        supabase
-          .from("expenses")
-          .select(
-            "id, household_id, user_id, amount, main_category, sub_category, category, date, note, is_joint",
-          )
-          .eq("household_id", householdId)
-          .order("date", { ascending: false }),
         supabase.rpc("get_my_household"),
         supabase
           .from("budgets")
           .select("id, household_id, category, limit_amount")
           .eq("household_id", householdId),
         supabase
-          .from("subcategory_budgets")
-          .select("id, household_id, main_category, sub_category, limit_amount")
-          .eq("household_id", householdId),
-        supabase
-          .from("recurring_expenses")
-          .select(
-            "id, household_id, user_id, amount, main_category, sub_category, category, note, is_joint, next_process_month",
-          )
+          .from("household_members")
+          .select("role")
           .eq("household_id", householdId)
-          .order("next_process_month", { ascending: true }),
+          .eq("user_id", signedInUserId)
+          .maybeSingle(),
       ]);
+
+      if (!myMembershipError && myMembershipRow?.role === "owner") {
+        setActiveRole("owner");
+        setOwnsHousehold(true);
+      } else if (!myMembershipError && myMembershipRow) {
+        setActiveRole("member");
+        setOwnsHousehold(false);
+      } else {
+        setActiveRole(null);
+        setOwnsHousehold(false);
+      }
+
+      let expenseRows: Record<string, unknown>[] | null = null;
+      let expensesError: { message: string } | null = null;
+
+      const expenseAttempt = await supabase
+        .from("expenses")
+        .select(EXPENSE_SELECT_HIERARCHY)
+        .eq("household_id", householdId)
+        .order("date", { ascending: false });
+
+      if (
+        expenseAttempt.error &&
+        isExpenseHierarchySchemaError(expenseAttempt.error.message)
+      ) {
+        setSupportsExpenseHierarchy(false);
+        const legacy = await supabase
+          .from("expenses")
+          .select(EXPENSE_SELECT_LEGACY)
+          .eq("household_id", householdId)
+          .order("date", { ascending: false });
+        expenseRows = legacy.data as Record<string, unknown>[] | null;
+        expensesError = legacy.error;
+      } else {
+        expenseRows = expenseAttempt.data as Record<string, unknown>[] | null;
+        expensesError = expenseAttempt.error;
+        if (!expenseAttempt.error) {
+          setSupportsExpenseHierarchy(true);
+        }
+      }
+
+      let recurringRows: Record<string, unknown>[] | null = null;
+      let recurringError: { message: string } | null = null;
+
+      const recurringAttempt = await supabase
+        .from("recurring_expenses")
+        .select(RECURRING_SELECT_HIERARCHY)
+        .eq("household_id", householdId)
+        .order("next_process_month", { ascending: true });
+
+      if (
+        recurringAttempt.error &&
+        isRecurringHierarchySchemaError(recurringAttempt.error.message)
+      ) {
+        const legacyRecurring = await supabase
+          .from("recurring_expenses")
+          .select(RECURRING_SELECT_LEGACY)
+          .eq("household_id", householdId)
+          .order("next_process_month", { ascending: true });
+        recurringRows = legacyRecurring.data as Record<string, unknown>[] | null;
+        recurringError = legacyRecurring.error;
+      } else {
+        recurringRows = recurringAttempt.data as Record<
+          string,
+          unknown
+        >[] | null;
+        recurringError = recurringAttempt.error;
+      }
+
+      let subcategoryRows: Record<string, unknown>[] | null = null;
+      let subcategoryError: { message: string } | null = null;
+
+      const subAttempt = await supabase
+        .from("subcategory_budgets")
+        .select("id, household_id, main_category, sub_category, limit_amount")
+        .eq("household_id", householdId);
+
+      if (
+        subAttempt.error &&
+        isSubcategoryBudgetsSchemaError(subAttempt.error.message)
+      ) {
+        setSupportsSubcategoryBudgetTable(false);
+        subcategoryRows = [];
+        subcategoryError = null;
+      } else {
+        subcategoryRows = subAttempt.data as Record<string, unknown>[] | null;
+        subcategoryError = subAttempt.error;
+        if (!subAttempt.error) {
+          setSupportsSubcategoryBudgetTable(true);
+        }
+      }
 
       const householdRow = Array.isArray(householdRpcRows)
         ? householdRpcRows[0]
@@ -378,10 +507,8 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       if (!householdRpcError && householdRow) {
         const row = normalizeHousehold(householdRow as Record<string, unknown>);
         setHousehold(row);
-        setOwnsHousehold(row.created_by === signedInUserId);
       } else {
         setHousehold(null);
-        setOwnsHousehold(false);
       }
 
       if (budgetsError) {
@@ -776,9 +903,14 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   );
 
   const deleteActiveHousehold = useCallback(async () => {
-    const { error: rpcError } = await supabase.rpc("delete_active_household");
+    const { data: remaining, error: rpcError } = await supabase.rpc(
+      "delete_active_household",
+    );
     if (rpcError) throw new Error(rpcError.message);
     await refresh();
+    return typeof remaining === "number"
+      ? remaining
+      : Number(remaining ?? 0);
   }, [supabase, refresh]);
 
   const addExpense = useCallback(
@@ -787,32 +919,69 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         throw new Error("Cannot add expense: no active household.");
       }
 
-      const { data, error: insertError } = await supabase
-        .from("expenses")
-        .insert({
-          household_id: activeHouseholdId,
-          user_id: input.user_id,
-          amount: input.amount,
-          main_category: input.main_category,
-          sub_category: input.sub_category,
-          category: input.category,
-          date: input.date,
-          note: input.note,
-          is_joint: input.is_joint,
-        })
-        .select(
-          "id, household_id, user_id, amount, main_category, sub_category, category, date, note, is_joint",
-        )
-        .single();
+      const hierarchicalPayload = {
+        household_id: activeHouseholdId,
+        user_id: input.user_id,
+        amount: input.amount,
+        main_category: input.main_category,
+        sub_category: input.sub_category,
+        category: input.category,
+        date: input.date,
+        note: input.note,
+        is_joint: input.is_joint,
+      };
+
+      const legacyPayload = {
+        household_id: activeHouseholdId,
+        user_id: input.user_id,
+        amount: input.amount,
+        category: input.category,
+        date: input.date,
+        note: input.note,
+        is_joint: input.is_joint,
+      };
+
+      async function insertExpenseRows(payload: object, selectList: string) {
+        return supabase
+          .from("expenses")
+          .insert(payload)
+          .select(selectList)
+          .single();
+      }
+
+      let selectColumns = EXPENSE_SELECT_HIERARCHY;
+      let payload: object = hierarchicalPayload;
+
+      if (!supportsExpenseHierarchy) {
+        selectColumns = EXPENSE_SELECT_LEGACY;
+        payload = legacyPayload;
+      }
+
+      let { data, error: insertError } = await insertExpenseRows(
+        payload,
+        selectColumns,
+      );
+
+      if (
+        insertError &&
+        isExpenseHierarchySchemaError(insertError.message) &&
+        supportsExpenseHierarchy
+      ) {
+        setSupportsExpenseHierarchy(false);
+        ({ data, error: insertError } = await insertExpenseRows(
+          legacyPayload,
+          EXPENSE_SELECT_LEGACY,
+        ));
+      }
 
       if (insertError || !data) {
         throw new Error(insertError?.message ?? "Failed to add expense.");
       }
 
-      const inserted = normalizeExpense(data as Record<string, unknown>);
+      const inserted = normalizeExpense(data as unknown as Record<string, unknown>);
       setExpenses((prev) => [inserted, ...prev]);
     },
-    [supabase, currentUser, activeHouseholdId],
+    [supabase, currentUser, activeHouseholdId, supportsExpenseHierarchy],
   );
 
   const deleteExpense = useCallback(
@@ -875,23 +1044,60 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       const nextProcessMonth =
         input.next_process_month ?? addOneMonth(getCurrentMonth());
 
-      const { data, error: insertError } = await supabase
-        .from("recurring_expenses")
-        .insert({
-          household_id: activeHouseholdId,
-          user_id: input.user_id,
-          amount: input.amount,
-          main_category: input.main_category,
-          sub_category: input.sub_category,
-          category: input.category,
-          note: input.note,
-          is_joint: input.is_joint,
-          next_process_month: nextProcessMonth,
-        })
-        .select(
-          "id, household_id, user_id, amount, main_category, sub_category, category, note, is_joint, next_process_month",
-        )
-        .single();
+      const hierarchicalPayload = {
+        household_id: activeHouseholdId,
+        user_id: input.user_id,
+        amount: input.amount,
+        main_category: input.main_category,
+        sub_category: input.sub_category,
+        category: input.category,
+        note: input.note,
+        is_joint: input.is_joint,
+        next_process_month: nextProcessMonth,
+      };
+
+      const legacyPayload = {
+        household_id: activeHouseholdId,
+        user_id: input.user_id,
+        amount: input.amount,
+        category: input.category,
+        note: input.note,
+        is_joint: input.is_joint,
+        next_process_month: nextProcessMonth,
+      };
+
+      async function insertRecurringRows(payload: object, selectList: string) {
+        return supabase
+          .from("recurring_expenses")
+          .insert(payload)
+          .select(selectList)
+          .single();
+      }
+
+      let selectColumns = RECURRING_SELECT_HIERARCHY;
+      let payload: object = hierarchicalPayload;
+
+      if (!supportsExpenseHierarchy) {
+        selectColumns = RECURRING_SELECT_LEGACY;
+        payload = legacyPayload;
+      }
+
+      let { data, error: insertError } = await insertRecurringRows(
+        payload,
+        selectColumns,
+      );
+
+      if (
+        insertError &&
+        isRecurringHierarchySchemaError(insertError.message) &&
+        supportsExpenseHierarchy
+      ) {
+        setSupportsExpenseHierarchy(false);
+        ({ data, error: insertError } = await insertRecurringRows(
+          legacyPayload,
+          RECURRING_SELECT_LEGACY,
+        ));
+      }
 
       if (insertError || !data) {
         throw new Error(
@@ -900,7 +1106,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       }
 
       const inserted = normalizeRecurringExpense(
-        data as Record<string, unknown>,
+        data as unknown as Record<string, unknown>,
       );
       setRecurringExpenses((prev) =>
         [...prev, inserted].sort((a, b) =>
@@ -908,7 +1114,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         ),
       );
     },
-    [supabase, currentUser, activeHouseholdId],
+    [supabase, currentUser, activeHouseholdId, supportsExpenseHierarchy],
   );
 
   const deleteRecurringExpense = useCallback(
@@ -944,21 +1150,52 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         return { processedCount: 0 };
       }
 
-      const expenseRows = due.map((template) => ({
-        household_id: activeHouseholdId,
-        user_id: template.user_id,
-        amount: template.amount,
-        main_category: template.main_category,
-        sub_category: template.sub_category,
-        category: template.category,
-        date: today,
-        note: template.note,
-        is_joint: template.is_joint,
-      }));
+      const expenseRows = supportsExpenseHierarchy
+        ? due.map((template) => ({
+            household_id: activeHouseholdId,
+            user_id: template.user_id,
+            amount: template.amount,
+            main_category: template.main_category,
+            sub_category: template.sub_category,
+            category: template.category,
+            date: today,
+            note: template.note,
+            is_joint: template.is_joint,
+          }))
+        : due.map((template) => ({
+            household_id: activeHouseholdId,
+            user_id: template.user_id,
+            amount: template.amount,
+            category: template.category,
+            date: today,
+            note: template.note,
+            is_joint: template.is_joint,
+          }));
 
-      const { error: insertError } = await supabase
+      let { error: insertError } = await supabase
         .from("expenses")
         .insert(expenseRows);
+
+      if (
+        insertError &&
+        isExpenseHierarchySchemaError(insertError.message) &&
+        supportsExpenseHierarchy
+      ) {
+        setSupportsExpenseHierarchy(false);
+        const legacyRows = due.map((template) => ({
+          household_id: activeHouseholdId,
+          user_id: template.user_id,
+          amount: template.amount,
+          category: template.category,
+          date: today,
+          note: template.note,
+          is_joint: template.is_joint,
+        }));
+        ({ error: insertError } = await supabase
+          .from("expenses")
+          .insert(legacyRows));
+      }
+
       if (insertError) {
         throw new Error(insertError.message);
       }
@@ -986,6 +1223,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       activeHouseholdId,
       recurringExpenses,
       loadActiveHouseholdData,
+      supportsExpenseHierarchy,
     ]);
 
   const signOut = useCallback(async () => {
@@ -994,6 +1232,11 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
   const upsertSubcategoryBudget = useCallback(
     async (mainCategory: string, subCategory: string, limitAmount: number) => {
+      if (!supportsSubcategoryBudgetTable) {
+        throw new Error(
+          "Sub-category budgets require the latest database_schema.sql (table subcategory_budgets).",
+        );
+      }
       if (!Number.isFinite(limitAmount) || limitAmount < 0) {
         throw new Error("Limit must be a non-negative number.");
       }
@@ -1026,11 +1269,16 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         );
       });
     },
-    [supabase],
+    [supabase, supportsSubcategoryBudgetTable],
   );
 
   const deleteSubcategoryBudget = useCallback(
     async (mainCategory: string, subCategory: string) => {
+      if (!supportsSubcategoryBudgetTable) {
+        throw new Error(
+          "Sub-category budgets require the latest database_schema.sql (table subcategory_budgets).",
+        );
+      }
       const { error: rpcError } = await supabase.rpc("delete_subcategory_budget", {
         p_main_category: mainCategory,
         p_sub_category: subCategory,
@@ -1047,7 +1295,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         ),
       );
     },
-    [supabase],
+    [supabase, supportsSubcategoryBudgetTable],
   );
 
   const unreadNotificationCount = useMemo(
@@ -1063,6 +1311,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       household,
       myHouseholds,
       activeHouseholdId,
+      activeRole,
       selectedMonth,
       loading,
       error,
@@ -1073,6 +1322,8 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       ownsHousehold,
       budgets,
       subcategoryBudgets,
+      supportsExpenseHierarchy,
+      supportsSubcategoryBudgetTable,
       recurringExpenses,
       addExpense,
       deleteExpense,
@@ -1100,6 +1351,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       household,
       myHouseholds,
       activeHouseholdId,
+      activeRole,
       selectedMonth,
       loading,
       error,
@@ -1110,6 +1362,8 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       ownsHousehold,
       budgets,
       subcategoryBudgets,
+      supportsExpenseHierarchy,
+      supportsSubcategoryBudgetTable,
       recurringExpenses,
       addExpense,
       deleteExpense,

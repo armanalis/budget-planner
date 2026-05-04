@@ -4,13 +4,17 @@ import { useState } from "react";
 import type { NewExpenseInput } from "@/types";
 import { useExpenses } from "@/context/ExpenseContext";
 import {
+  CATEGORY_TO_I18N_KEY,
+  EXPENSE_CATEGORY_ENGLISH,
   MAIN_CATEGORY_ENGLISH,
   translateMainCategory,
   useLanguage,
+  type ExpenseCategoryEnglish,
   type MainCategoryEnglish,
 } from "@/context/LanguageContext";
 
 const DEFAULT_MAIN_CATEGORY: MainCategoryEnglish = MAIN_CATEGORY_ENGLISH[0];
+const DEFAULT_LEGACY_CATEGORY: ExpenseCategoryEnglish = EXPENSE_CATEGORY_ENGLISH[0];
 
 const JOINT_OPTION_VALUE = "__joint__";
 
@@ -39,6 +43,8 @@ export default function AddExpenseForm({
     currentUser,
     members,
     subcategoryBudgets,
+    supportsExpenseHierarchy,
+    supportsSubcategoryBudgetTable,
   } = useExpenses();
   const { t } = useLanguage();
 
@@ -46,6 +52,8 @@ export default function AddExpenseForm({
   const [ledger, setLedger] = useState<string>(() => currentUser?.id ?? "");
   const [mainCategory, setMainCategory] =
     useState<MainCategoryEnglish>(DEFAULT_MAIN_CATEGORY);
+  const [legacyCategory, setLegacyCategory] =
+    useState<ExpenseCategoryEnglish>(DEFAULT_LEGACY_CATEGORY);
   const [subCategory, setSubCategory] = useState("");
   const [date, setDate] = useState<string>(() => getTodayDate());
   const [note, setNote] = useState("");
@@ -55,9 +63,12 @@ export default function AddExpenseForm({
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const displayedExchangeRate = liveExchangeRate.toFixed(2);
-  const subcategoryOptions = subcategoryBudgets
-    .filter((row) => row.main_category === mainCategory)
-    .sort((a, b) => a.sub_category.localeCompare(b.sub_category));
+  const subcategoryOptions =
+    supportsExpenseHierarchy && supportsSubcategoryBudgetTable
+      ? subcategoryBudgets
+          .filter((row) => row.main_category === mainCategory)
+          .sort((a, b) => a.sub_category.localeCompare(b.sub_category))
+      : [];
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -86,21 +97,34 @@ export default function AddExpenseForm({
 
     const isJoint = ledger === JOINT_OPTION_VALUE;
     const userId = isJoint ? currentUser.id : ledger || currentUser.id;
-    const normalizedSubCategory = subCategory.trim();
-    const resolvedSubCategory =
-      normalizedSubCategory.length > 0 ? normalizedSubCategory : null;
-    const storedCategory = resolvedSubCategory ?? mainCategory;
 
-    const input: NewExpenseInput = {
-      amount: finalAmount,
-      main_category: mainCategory,
-      sub_category: resolvedSubCategory,
-      category: storedCategory,
-      date,
-      note: mergedNote,
-      user_id: userId,
-      is_joint: isJoint,
-    };
+    const input: NewExpenseInput = supportsExpenseHierarchy
+      ? (() => {
+          const normalizedSubCategory = subCategory.trim();
+          const resolvedSubCategory =
+            normalizedSubCategory.length > 0 ? normalizedSubCategory : null;
+          const storedCategory = resolvedSubCategory ?? mainCategory;
+          return {
+            amount: finalAmount,
+            main_category: mainCategory,
+            sub_category: resolvedSubCategory,
+            category: storedCategory,
+            date,
+            note: mergedNote,
+            user_id: userId,
+            is_joint: isJoint,
+          };
+        })()
+      : {
+          amount: finalAmount,
+          main_category: legacyCategory,
+          sub_category: null,
+          category: legacyCategory,
+          date,
+          note: mergedNote,
+          user_id: userId,
+          is_joint: isJoint,
+        };
 
     try {
       setSubmitting(true);
@@ -111,6 +135,8 @@ export default function AddExpenseForm({
         await createRecurringExpense({
           user_id: input.user_id,
           amount: input.amount,
+          main_category: input.main_category,
+          sub_category: input.sub_category,
           category: input.category,
           note: input.note,
           is_joint: input.is_joint,
@@ -120,6 +146,7 @@ export default function AddExpenseForm({
       setAmount("");
       setLedger(currentUser.id);
       setMainCategory(DEFAULT_MAIN_CATEGORY);
+      setLegacyCategory(DEFAULT_LEGACY_CATEGORY);
       setSubCategory("");
       setDate(getTodayDate());
       setNote("");
@@ -140,6 +167,12 @@ export default function AddExpenseForm({
       <h2 className="text-sm font-semibold text-slate-800 dark:text-white">
         {t("addExpense")}
       </h2>
+
+      {!supportsExpenseHierarchy && (
+        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
+          {t("dbSchemaLegacyExpenseHint")}
+        </p>
+      )}
 
       <div className="mt-4 space-y-4">
         <label className="block">
@@ -211,57 +244,83 @@ export default function AddExpenseForm({
           </select>
         </label>
 
-        <label className="block">
-          <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
-            {t("expenseMainCategory")}
-          </span>
-          <select
-            value={mainCategory}
-            onChange={(event) =>
-              setMainCategory(event.target.value as MainCategoryEnglish)
-            }
-            className={inputClassName}
-          >
-            {MAIN_CATEGORY_ENGLISH.map((option) => (
-              <option key={option} value={option}>
-                {translateMainCategory(t, option)}
-              </option>
-            ))}
-          </select>
-        </label>
+        {supportsExpenseHierarchy ? (
+          <>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
+                {t("expenseMainCategory")}
+              </span>
+              <select
+                value={mainCategory}
+                onChange={(event) => {
+                  setMainCategory(event.target.value as MainCategoryEnglish);
+                  setSubCategory("");
+                }}
+                className={inputClassName}
+              >
+                {MAIN_CATEGORY_ENGLISH.map((option) => (
+                  <option key={option} value={option}>
+                    {translateMainCategory(t, option)}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-        <label className="block">
-          <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
-            {t("expenseSubCategory")}
-          </span>
-          {subcategoryOptions.length > 0 ? (
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
+                {t("expenseSubCategory")}
+              </span>
+              {subcategoryOptions.length > 0 ? (
+                <select
+                  value={subCategory}
+                  onChange={(event) => setSubCategory(event.target.value)}
+                  className={inputClassName}
+                >
+                  <option value="">{t("expenseNoSubcategory")}</option>
+                  {subcategoryOptions.map((option) => (
+                    <option key={option.id} value={option.sub_category}>
+                      {option.sub_category}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <input
+                    type="text"
+                    value={subCategory}
+                    onChange={(event) => setSubCategory(event.target.value)}
+                    placeholder={t("expenseNoSubcategory")}
+                    className={inputClassName}
+                  />
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    {!supportsSubcategoryBudgetTable
+                      ? t("settingsSubcategoryBudgetNeedsMigration")
+                      : t("expenseSubcategoryOptional")}
+                  </p>
+                </>
+              )}
+            </label>
+          </>
+        ) : (
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
+              {t("expenseCategoryLegacy")}
+            </span>
             <select
-              value={subCategory}
-              onChange={(event) => setSubCategory(event.target.value)}
+              value={legacyCategory}
+              onChange={(event) =>
+                setLegacyCategory(event.target.value as ExpenseCategoryEnglish)
+              }
               className={inputClassName}
             >
-              <option value="">{t("expenseNoSubcategory")}</option>
-              {subcategoryOptions.map((option) => (
-                <option key={option.id} value={option.sub_category}>
-                  {option.sub_category}
+              {EXPENSE_CATEGORY_ENGLISH.map((option) => (
+                <option key={option} value={option}>
+                  {t(CATEGORY_TO_I18N_KEY[option])}
                 </option>
               ))}
             </select>
-          ) : (
-            <>
-              <input
-                type="text"
-                value={subCategory}
-                onChange={(event) => setSubCategory(event.target.value)}
-                placeholder={t("expenseNoSubcategory")}
-                className={inputClassName}
-              />
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                {t("expenseSubcategoryOptional")}
-              </p>
-            </>
-          )}
-        </label>
+          </label>
+        )}
 
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">

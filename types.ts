@@ -1,3 +1,15 @@
+/** Same as `Member` — one row per auth user in `public.users`. */
+export type User = Member;
+
+export type HouseholdRole = "owner" | "member";
+
+/** Row in `household_members` (many-to-many with role). */
+export interface HouseholdMember {
+  user_id: string;
+  household_id: string;
+  role: HouseholdRole;
+}
+
 export interface Member {
   id: string;
   /**

@@ -86,13 +86,29 @@ ALTER TABLE public.users ALTER COLUMN active_household_id DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS users_active_household_id_idx
   ON public.users (active_household_id);
 
--- Membership: many-to-many between users and households.
+-- Membership: many-to-many between users and households (with owner/member role).
 CREATE TABLE IF NOT EXISTS public.household_members (
   user_id UUID NOT NULL REFERENCES public.users (id) ON DELETE CASCADE,
   household_id UUID NOT NULL REFERENCES public.households (id) ON DELETE CASCADE,
   joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, household_id)
 );
+
+ALTER TABLE public.household_members
+  ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'member';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'household_members_role_check'
+      AND conrelid = 'public.household_members'::regclass
+  ) THEN
+    ALTER TABLE public.household_members
+      ADD CONSTRAINT household_members_role_check
+      CHECK (role IN ('owner', 'member'));
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS household_members_household_idx
   ON public.household_members (household_id);
@@ -111,11 +127,19 @@ WHERE h.created_by IS NULL
   AND h.id = sub.active_household_id;
 
 -- Backfill `household_members` so existing users keep access after the rename.
-INSERT INTO public.household_members (user_id, household_id)
-SELECT id, active_household_id
-FROM public.users
-WHERE active_household_id IS NOT NULL
-ON CONFLICT DO NOTHING;
+INSERT INTO public.household_members (user_id, household_id, role)
+SELECT u.id, u.active_household_id, 'member'::TEXT
+FROM public.users u
+WHERE u.active_household_id IS NOT NULL
+ON CONFLICT (user_id, household_id) DO NOTHING;
+
+-- Assign owner role to household creators (canonical ownership for RLS/RPCs).
+UPDATE public.household_members hm
+SET role = 'owner'
+FROM public.households h
+WHERE hm.household_id = h.id
+  AND h.created_by IS NOT NULL
+  AND hm.user_id = h.created_by;
 
 -- Expenses: strict isolation by household_id; user_id = who paid.
 CREATE TABLE IF NOT EXISTS public.expenses (
@@ -307,9 +331,10 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT id
-  FROM public.households
-  WHERE created_by = auth.uid()
+  SELECT hm.household_id
+  FROM public.household_members hm
+  WHERE hm.user_id = auth.uid()
+    AND hm.role = 'owner'
 $$;
 
 REVOKE ALL ON FUNCTION public.owner_household_ids() FROM PUBLIC;
@@ -759,8 +784,8 @@ BEGIN
   VALUES (v_name, auth.uid())
   RETURNING households.id INTO v_id;
 
-  INSERT INTO public.household_members (user_id, household_id)
-  VALUES (auth.uid(), v_id)
+  INSERT INTO public.household_members (user_id, household_id, role)
+  VALUES (auth.uid(), v_id, 'owner')
   ON CONFLICT DO NOTHING;
 
   UPDATE public.users
@@ -831,7 +856,10 @@ USING (household_id IN (SELECT public.current_user_household_ids()));
 DROP POLICY IF EXISTS hm_insert_self ON public.household_members;
 CREATE POLICY hm_insert_self
 ON public.household_members FOR INSERT TO authenticated
-WITH CHECK (user_id = auth.uid());
+WITH CHECK (
+  user_id = auth.uid()
+  AND role = 'member'
+);
 
 DROP POLICY IF EXISTS hm_delete_self ON public.household_members;
 CREATE POLICY hm_delete_self
@@ -1054,8 +1082,8 @@ BEGIN
   INSERT INTO public.users (id, active_household_id, display_name)
   VALUES (NEW.id, v_new_household_id, v_display_name);
 
-  INSERT INTO public.household_members (user_id, household_id)
-  VALUES (NEW.id, v_new_household_id)
+  INSERT INTO public.household_members (user_id, household_id, role)
+  VALUES (NEW.id, v_new_household_id, 'owner')
   ON CONFLICT DO NOTHING;
 
   RETURN NEW;
@@ -1091,7 +1119,12 @@ BEGIN
 
   SELECT * INTO v_hh FROM public.households WHERE id = v_req.household_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'Household not found'; END IF;
-  IF v_hh.created_by IS NULL OR v_hh.created_by <> auth.uid() THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.household_members hm
+    WHERE hm.household_id = v_req.household_id
+      AND hm.user_id = auth.uid()
+      AND hm.role = 'owner'
+  ) THEN
     RAISE EXCEPTION 'Only the household owner can approve';
   END IF;
 
@@ -1104,8 +1137,8 @@ BEGIN
         display_name = EXCLUDED.display_name;
 
   -- Add them to the household's member list.
-  INSERT INTO public.household_members (user_id, household_id)
-  VALUES (v_req.requester_id, v_req.household_id)
+  INSERT INTO public.household_members (user_id, household_id, role)
+  VALUES (v_req.requester_id, v_req.household_id, 'member')
   ON CONFLICT DO NOTHING;
 
   UPDATE public.household_join_requests
@@ -1146,7 +1179,12 @@ BEGIN
 
   SELECT * INTO v_hh FROM public.households WHERE id = v_req.household_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'Household not found'; END IF;
-  IF v_hh.created_by IS NULL OR v_hh.created_by <> auth.uid() THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.household_members hm
+    WHERE hm.household_id = v_req.household_id
+      AND hm.user_id = auth.uid()
+      AND hm.role = 'owner'
+  ) THEN
     RAISE EXCEPTION 'Only the household owner can reject';
   END IF;
 
@@ -1202,8 +1240,10 @@ BEGIN
   END IF;
 
   IF NOT EXISTS (
-    SELECT 1 FROM public.households
-    WHERE id = v_household_id AND created_by = auth.uid()
+    SELECT 1 FROM public.household_members hm
+    WHERE hm.household_id = v_household_id
+      AND hm.user_id = auth.uid()
+      AND hm.role = 'owner'
   ) THEN
     RAISE EXCEPTION 'Only the household owner can rename it';
   END IF;
@@ -1228,15 +1268,19 @@ GRANT EXECUTE ON FUNCTION public.rename_household(TEXT) TO authenticated;
 -- Owner-only RPC: delete the user's currently active household.
 -- If this household is active for any users, move them to one of their other
 -- memberships when possible; otherwise set active_household_id to NULL.
+-- Returns: number of household memberships this user still has after deletion.
 -- ---------------------------------------------------------------------------
+DROP FUNCTION IF EXISTS public.delete_active_household();
+
 CREATE OR REPLACE FUNCTION public.delete_active_household()
-RETURNS void
+RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
   v_household_id UUID;
+  v_remaining INTEGER;
 BEGIN
   IF auth.uid() IS NULL THEN
     RAISE EXCEPTION 'Not authenticated';
@@ -1251,8 +1295,10 @@ BEGIN
   END IF;
 
   IF NOT EXISTS (
-    SELECT 1 FROM public.households
-    WHERE id = v_household_id AND created_by = auth.uid()
+    SELECT 1 FROM public.household_members hm
+    WHERE hm.household_id = v_household_id
+      AND hm.user_id = auth.uid()
+      AND hm.role = 'owner'
   ) THEN
     RAISE EXCEPTION 'Only the household owner can delete it';
   END IF;
@@ -1278,6 +1324,12 @@ BEGIN
 
   DELETE FROM public.households
   WHERE id = v_household_id;
+
+  SELECT COUNT(*)::INT INTO v_remaining
+  FROM public.household_members
+  WHERE user_id = auth.uid();
+
+  RETURN v_remaining;
 END;
 $$;
 
@@ -1337,8 +1389,15 @@ WHERE u.id IS NULL
 ON CONFLICT (id) DO NOTHING;
 
 -- 3) Make sure every users row has a corresponding household_members row.
-INSERT INTO public.household_members (user_id, household_id)
-SELECT u.id, u.active_household_id
+INSERT INTO public.household_members (user_id, household_id, role)
+SELECT u.id, u.active_household_id, 'member'::TEXT
 FROM public.users u
 WHERE u.active_household_id IS NOT NULL
 ON CONFLICT DO NOTHING;
+
+UPDATE public.household_members hm
+SET role = 'owner'
+FROM public.households h
+WHERE hm.household_id = h.id
+  AND h.created_by IS NOT NULL
+  AND hm.user_id = h.created_by;

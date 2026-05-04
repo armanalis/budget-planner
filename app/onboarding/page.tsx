@@ -8,6 +8,9 @@ import { useExpenses } from "@/context/ExpenseContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { createClient } from "@/utils/supabase/client";
 
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export default function OnboardingPage() {
   const router = useRouter();
   const { t } = useLanguage();
@@ -18,7 +21,7 @@ export default function OnboardingPage() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  const [joinName, setJoinName] = useState("");
+  const [joinId, setJoinId] = useState("");
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinNotice, setJoinNotice] = useState<string | null>(null);
@@ -48,7 +51,8 @@ export default function OnboardingPage() {
       if (err instanceof Error) {
         const isDuplicateName =
           /duplicate key/i.test(err.message) ||
-          /households_name_unique_idx/i.test(err.message);
+          /households_name_unique_idx/i.test(err.message) ||
+          /already uses that name/i.test(err.message);
         if (isDuplicateName) {
           setCreateError(t("onboardingNameTaken"));
         } else {
@@ -66,9 +70,13 @@ export default function OnboardingPage() {
     event.preventDefault();
     if (!currentUser) return;
 
-    const trimmed = joinName.trim();
+    const trimmed = joinId.trim();
     if (!trimmed) {
       setJoinError(t("onboardingJoinNameRequired"));
+      return;
+    }
+    if (!UUID_REGEX.test(trimmed)) {
+      setJoinError(t("onboardingInvalidHouseholdId"));
       return;
     }
 
@@ -76,38 +84,27 @@ export default function OnboardingPage() {
     setJoinError(null);
     setJoinNotice(null);
     try {
-      const { data: householdRows, error: householdLookupError } = await supabase.rpc(
-        "find_household_by_name",
-        { p_name: trimmed },
-      );
-
-      if (householdLookupError) {
-        throw new Error(householdLookupError.message);
-      }
-
-      if (!householdRows || householdRows.length === 0) {
-        setJoinError(t("onboardingHouseholdNotFound"));
-        return;
-      }
-
-      if (householdRows.length > 1) {
-        setJoinError(t("onboardingMultipleHouseholdsFound"));
-        return;
-      }
-
-      const targetHouseholdId = String(householdRows[0].id);
-
       const { error: memberError } = await supabase
         .from("household_members")
-        .insert({ user_id: currentUser.id, household_id: targetHouseholdId });
+        .insert({
+          user_id: currentUser.id,
+          household_id: trimmed,
+          role: "member",
+        });
 
       if (memberError) {
-        // Postgres unique-violation = already a member; treat that as success.
         const isDuplicate =
           memberError.code === "23505" ||
           /duplicate key/i.test(memberError.message);
+        const isFkMissing =
+          memberError.code === "23503" ||
+          /foreign key/i.test(memberError.message);
+
         if (isDuplicate) {
           setJoinNotice(t("onboardingAlreadyMember"));
+        } else if (isFkMissing) {
+          setJoinError(t("cannotJoinHouseholdNotExists"));
+          return;
         } else {
           throw new Error(memberError.message);
         }
@@ -115,7 +112,7 @@ export default function OnboardingPage() {
 
       const { error: switchError } = await supabase.rpc(
         "switch_active_household",
-        { p_household_id: targetHouseholdId },
+        { p_household_id: trimmed },
       );
 
       if (switchError) {
@@ -215,13 +212,12 @@ export default function OnboardingPage() {
           </label>
           <input
             type="text"
-            value={joinName}
-            onChange={(event) => setJoinName(event.target.value)}
-            placeholder={t("onboardingJoinNamePlaceholder")}
+            value={joinId}
+            onChange={(event) => setJoinId(event.target.value)}
+            placeholder={t("onboardingJoinIdPlaceholder")}
             spellCheck={false}
             autoComplete="off"
-            maxLength={100}
-            className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-emerald-500 focus:ring-2 dark:border-gray-700 dark:bg-gray-800 dark:text-slate-100"
+            className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-900 outline-none ring-emerald-500 focus:ring-2 dark:border-gray-700 dark:bg-gray-800 dark:text-slate-100"
             required
           />
 
@@ -238,7 +234,7 @@ export default function OnboardingPage() {
 
           <button
             type="submit"
-            disabled={joining || !joinName.trim()}
+            disabled={joining || !joinId.trim()}
             className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-gray-700"
           >
             {joining ? t("onboardingJoining") : t("onboardingJoinAction")}

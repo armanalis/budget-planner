@@ -8,6 +8,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import type { Expense } from "@/types";
 
 export type Language = "en" | "tr" | "it";
 
@@ -141,6 +142,11 @@ const dictionary = {
     expenseSubCategory: "Sub-category",
     expenseNoSubcategory: "No sub-category",
     expenseSubcategoryOptional: "Optional for overflow categories like Other.",
+    expenseCategoryLegacy: "Category",
+    dbSchemaLegacyExpenseHint:
+      "Your Supabase project is missing new expense columns (e.g. main_category). Run the latest database_schema.sql so joint and personal expenses save correctly with sub-categories.",
+    settingsSubcategoryBudgetNeedsMigration:
+      "Sub-category budget caps require the subcategory_budgets table from database_schema.sql.",
     navSettings: "Settings",
     settingsTitle: "Settings",
     settingsAccountSection: "Account",
@@ -148,6 +154,8 @@ const dictionary = {
     settingsHouseholdSection: "Household",
     settingsHouseholdSubtitle: "Update the household name everyone sees.",
     settingsHouseholdOwnerOnly: "Only the household owner can change the name.",
+    settingsOnlyOwnersCanDeleteHousehold:
+      "Only owners can delete this household.",
     settingsRenameHousehold: "Save",
     settingsRenamingHousehold: "Saving…",
     settingsHouseholdRenamed: "Household name updated.",
@@ -163,6 +171,7 @@ const dictionary = {
     settingsDeleteHouseholdConfirmLabel: "Confirmation",
     settingsDeleteHouseholdConfirmPlaceholder: "DELETE",
     settingsDeleteHouseholdFailed: "Could not delete the household.",
+    householdDeletedSuccessfully: "Household deleted successfully.",
     settingsMoreHouseholdsSection: "Multiple households",
     settingsMoreHouseholdsBody:
       "Your account can belong to several households at once—for example separate homes or budgets. Open the dropdown next to your household name (sidebar on desktop, header on mobile) to switch. Add or join another one using the button below.",
@@ -235,7 +244,13 @@ const dictionary = {
     recurringNextRun: "Next run",
     recurringDelete: "Delete recurring expense",
     switchHousehold: "Switch Household",
+    createOrJoin: "Create or Join",
     createOrJoinAnother: "Create or Join another household",
+    deleteHousehold: "Delete Household",
+    roleOwner: "Owner",
+    roleMember: "Member",
+    cannotJoinHouseholdNotExists:
+      "Cannot join, household does not exist",
     activeBadge: "Active",
     onboardingTitle: "Add another household",
     onboardingSubtitle:
@@ -245,14 +260,16 @@ const dictionary = {
       "Start a fresh shared budget. You'll automatically become its owner.",
     onboardingCreateAction: "Create household",
     onboardingCreating: "Creating…",
-    onboardingJoinTitle: "Join with household name",
+    onboardingJoinTitle: "Join with household ID",
     onboardingJoinSubtitle:
-      "Type the exact household name. If it exists, you'll join and switch to it.",
-    onboardingJoinPlaceholder: "Household name",
-    onboardingJoinNamePlaceholder: "e.g. Home Budget",
+      "Ask an owner to copy your household ID from settings or notifications.",
+    onboardingJoinPlaceholder: "Household ID (UUID)",
+    onboardingJoinIdPlaceholder: "00000000-0000-0000-0000-000000000000",
     onboardingJoinAction: "Join household",
     onboardingJoining: "Joining…",
-    onboardingJoinNameRequired: "Please write a household name.",
+    onboardingInvalidHouseholdId:
+      "That doesn't look like a valid household ID.",
+    onboardingJoinNameRequired: "Please paste the household ID.",
     onboardingMultipleHouseholdsFound:
       "More than one household uses that name. Ask the owner to rename theirs to something unique.",
     onboardingHouseholdNotFound:
@@ -390,6 +407,8 @@ const dictionary = {
     settingsHouseholdSection: "Ev",
     settingsHouseholdSubtitle: "Herkesin gördüğü ev adını güncelle.",
     settingsHouseholdOwnerOnly: "Yalnızca evin sahibi adı değiştirebilir.",
+    settingsOnlyOwnersCanDeleteHousehold:
+      "Bu evi yalnızca sahipler silebilir.",
     settingsRenameHousehold: "Kaydet",
     settingsRenamingHousehold: "Kaydediliyor…",
     settingsHouseholdRenamed: "Ev adı güncellendi.",
@@ -405,6 +424,7 @@ const dictionary = {
     settingsDeleteHouseholdConfirmLabel: "Onay",
     settingsDeleteHouseholdConfirmPlaceholder: "DELETE",
     settingsDeleteHouseholdFailed: "Ev silinemedi.",
+    householdDeletedSuccessfully: "Ev başarıyla silindi.",
     settingsMoreHouseholdsSection: "Birden fazla ev",
     settingsMoreHouseholdsBody:
       "Hesabın aynı anda birden fazla evde olabilir (örneğin farklı evler veya bütçeler). Masaüstünde yan menüde, mobilde üst başlıkta yer alan eve tıklayarak seçim yap. Aşağıdan yeni ev oluştur veya kimlik (UUID) ile katıl.",
@@ -464,7 +484,12 @@ const dictionary = {
     recurringNextRun: "Sıradaki ay",
     recurringDelete: "Düzenli harcamayı sil",
     switchHousehold: "Ev Değiştir",
+    createOrJoin: "Oluştur veya Katıl",
     createOrJoinAnother: "Başka bir ev oluştur veya katıl",
+    deleteHousehold: "Evi Sil",
+    roleOwner: "Sahip",
+    roleMember: "Üye",
+    cannotJoinHouseholdNotExists: "Katılınamıyor, böyle bir ev yok",
     activeBadge: "Aktif",
     onboardingTitle: "Başka bir ev ekle",
     onboardingSubtitle:
@@ -474,18 +499,19 @@ const dictionary = {
       "Sıfırdan paylaşılan bir bütçe başlatın. Otomatik olarak sahibi olursunuz.",
     onboardingCreateAction: "Ev oluştur",
     onboardingCreating: "Oluşturuluyor…",
-    onboardingJoinTitle: "Ev adıyla katıl",
+    onboardingJoinTitle: "Ev kimliğiyle katıl",
     onboardingJoinSubtitle:
-      "Ev adını aynen yazın. Varsa katılır ve otomatik olarak o eve geçersiniz.",
-    onboardingJoinPlaceholder: "Ev adı",
-    onboardingJoinNamePlaceholder: "örn. Ev Bütçesi",
+      "Sahipten ev kimliğini (UUID) paylaşmasını isteyin.",
+    onboardingJoinPlaceholder: "Ev kimliği (UUID)",
+    onboardingJoinIdPlaceholder: "00000000-0000-0000-0000-000000000000",
     onboardingJoinAction: "Eve katıl",
     onboardingJoining: "Katılıyor…",
-    onboardingJoinNameRequired: "Lütfen bir ev adı yazın.",
+    onboardingInvalidHouseholdId: "Bu geçerli bir ev kimliğine benzemiyor.",
+    onboardingJoinNameRequired: "Lütfen ev kimliğini yapıştırın.",
     onboardingMultipleHouseholdsFound:
       "Bu adı birden fazla ev kullanıyor. Ev sahibinden adı benzersiz yapmasını isteyin.",
     onboardingHouseholdNotFound:
-      "Bu adla bir ev bulamadık. Yazımı ev sahibiyle birlikte kontrol edin.",
+      "Bu kimlikle bir ev bulamadık. Sahiple birlikte kontrol edin.",
     onboardingAlreadyMember:
       "Zaten bu evin üyesisiniz. Şimdi ona geçiliyor.",
     onboardingNameTaken: "Bu ev adı zaten kullanımda.",
@@ -619,6 +645,8 @@ const dictionary = {
     settingsHouseholdSection: "Casa",
     settingsHouseholdSubtitle: "Aggiorna il nome della casa visibile a tutti.",
     settingsHouseholdOwnerOnly: "Solo il proprietario può cambiare il nome.",
+    settingsOnlyOwnersCanDeleteHousehold:
+      "Solo i proprietari possono eliminare questa casa.",
     settingsRenameHousehold: "Salva",
     settingsRenamingHousehold: "Salvataggio…",
     settingsHouseholdRenamed: "Nome della casa aggiornato.",
@@ -634,6 +662,7 @@ const dictionary = {
     settingsDeleteHouseholdConfirmLabel: "Conferma",
     settingsDeleteHouseholdConfirmPlaceholder: "DELETE",
     settingsDeleteHouseholdFailed: "Impossibile eliminare la casa.",
+    householdDeletedSuccessfully: "Casa eliminata correttamente.",
     settingsMoreHouseholdsSection: "Più case",
     settingsMoreHouseholdsBody:
       "Il tuo account può appartenere a più case contemporaneamente (es. case diverse o budget diversi). Apri il menu accanto al nome nella barra laterale sul desktop o nell’header su mobile per cambiare. Aggiungi o unisciti a un'altra casa con il pulsante sotto.",
@@ -695,7 +724,13 @@ const dictionary = {
     recurringNextRun: "Prossimo mese",
     recurringDelete: "Elimina spesa ricorrente",
     switchHousehold: "Cambia Casa",
+    createOrJoin: "Crea o Unisciti",
     createOrJoinAnother: "Crea o unisciti a un'altra casa",
+    deleteHousehold: "Elimina casa",
+    roleOwner: "Proprietario",
+    roleMember: "Membro",
+    cannotJoinHouseholdNotExists:
+      "Impossibile unirsi: la casa non esiste",
     activeBadge: "Attivo",
     onboardingTitle: "Aggiungi un'altra casa",
     onboardingSubtitle:
@@ -705,18 +740,20 @@ const dictionary = {
       "Avvia un nuovo budget condiviso. Ne diventerai automaticamente il proprietario.",
     onboardingCreateAction: "Crea casa",
     onboardingCreating: "Creazione…",
-    onboardingJoinTitle: "Unisciti tramite nome casa",
+    onboardingJoinTitle: "Unisciti con ID casa",
     onboardingJoinSubtitle:
-      "Scrivi il nome esatto della casa. Se esiste, entrerai e passerai a quella casa.",
-    onboardingJoinPlaceholder: "Nome casa",
-    onboardingJoinNamePlaceholder: "es. Budget Casa",
+      "Chiedi al proprietario l’ID della casa (UUID).",
+    onboardingJoinPlaceholder: "ID casa (UUID)",
+    onboardingJoinIdPlaceholder: "00000000-0000-0000-0000-000000000000",
     onboardingJoinAction: "Unisciti alla casa",
     onboardingJoining: "Unione in corso…",
-    onboardingJoinNameRequired: "Scrivi un nome casa.",
+    onboardingInvalidHouseholdId:
+      "Non sembra un ID casa valido.",
+    onboardingJoinNameRequired: "Incolla l’ID della casa.",
     onboardingMultipleHouseholdsFound:
       "Più case usano questo nome. Chiedi al proprietario di renderlo univoco.",
     onboardingHouseholdNotFound:
-      "Non abbiamo trovato nessuna casa con questo nome. Controlla l'ortografia con il proprietario.",
+      "Non abbiamo trovato nessuna casa con questo ID. Verifica con il proprietario.",
     onboardingAlreadyMember:
       "Sei già membro di questa casa. Passaggio in corso.",
     onboardingNameTaken: "Questo nome casa è già in uso.",
@@ -796,6 +833,31 @@ export function translateMainCategory(
   const key = MAIN_CATEGORY_TO_I18N_KEY[mainCategory as MainCategoryEnglish];
   if (key) return t(key);
   return mainCategory;
+}
+
+/** Label for lists (joint account, member detail, recurring rows). */
+export function formatExpenseCategoryDisplay(
+  t: (key: TranslationKey, vars?: Record<string, string>) => string,
+  expense: Pick<Expense, "main_category" | "sub_category" | "category">,
+): string {
+  const sub =
+    expense.sub_category != null && String(expense.sub_category).trim() !== ""
+      ? String(expense.sub_category).trim()
+      : null;
+
+  const mainLabel = MAIN_CATEGORY_TO_I18N_KEY[
+    expense.main_category as MainCategoryEnglish
+  ]
+    ? translateMainCategory(t, expense.main_category)
+    : translateExpenseCategory(t, expense.main_category);
+
+  if (sub) {
+    return `${mainLabel} › ${sub}`;
+  }
+
+  return MAIN_CATEGORY_TO_I18N_KEY[expense.main_category as MainCategoryEnglish]
+    ? mainLabel
+    : translateExpenseCategory(t, expense.category);
 }
 
 type LanguageContextValue = {

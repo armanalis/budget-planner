@@ -2,7 +2,7 @@
 
 import { useExpenses } from "@/context/ExpenseContext";
 import {
-  translateExpenseCategory,
+  formatExpenseCategoryDisplay,
   useLanguage,
 } from "@/context/LanguageContext";
 import { Trash2 } from "lucide-react";
@@ -35,7 +35,7 @@ export default function JointAccountPage() {
             <article key={expense.id} className={cardClass}>
               <div className="flex items-start justify-between gap-3">
                 <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                  {translateExpenseCategory(t, expense.category)}
+                  {formatExpenseCategoryDisplay(t, expense)}
                 </p>
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-semibold text-blue-600 dark:text-blue-400">
