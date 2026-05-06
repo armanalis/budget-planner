@@ -68,6 +68,8 @@ const dictionary = {
       "You're in! Your request to join {household} was approved.",
     notificationJoinRequestRejected:
       "Your request to join {household} was declined.",
+    notificationBudgetOverLimit:
+      "Heads up: your spending in {category} reached €{spent} and exceeded the limit of €{limit}.",
     notificationActionFailed: "Could not complete that action.",
     navNotifications: "Inbox",
     unread: "Unread",
@@ -249,6 +251,11 @@ const dictionary = {
     deleteHousehold: "Delete Household",
     roleOwner: "Owner",
     roleMember: "Member",
+    householdType: "Household type",
+    householdTypeRomantic: "Romantic relationship",
+    householdTypeHousemates: "Housemates",
+    householdTypeFamily: "Family",
+    householdTypeOther: "Other",
     cannotJoinHouseholdNotExists:
       "Cannot join, household does not exist",
     activeBadge: "Active",
@@ -273,7 +280,7 @@ const dictionary = {
     onboardingMultipleHouseholdsFound:
       "More than one household uses that name. Ask the owner to rename theirs to something unique.",
     onboardingHouseholdNotFound:
-      "We couldn't find a household with that name. Check the spelling with the owner.",
+      "We couldn't find a household with that ID. Check it with the owner.",
     onboardingAlreadyMember:
       "You're already a member of this household. Switching to it now.",
     onboardingNameTaken: "That household name is already in use.",
@@ -335,6 +342,8 @@ const dictionary = {
       "Hoş geldin! {household} evine katılma isteğin onaylandı.",
     notificationJoinRequestRejected:
       "{household} evine katılma isteğin reddedildi.",
+    notificationBudgetOverLimit:
+      "Dikkat: {category} harcaman €{spent} oldu ve €{limit} limitini aştı.",
     notificationActionFailed: "İşlem tamamlanamadı.",
     navNotifications: "Bildirimler",
     unread: "Okunmamış",
@@ -489,6 +498,11 @@ const dictionary = {
     deleteHousehold: "Evi Sil",
     roleOwner: "Sahip",
     roleMember: "Üye",
+    householdType: "Ev tipi",
+    householdTypeRomantic: "Romantik ilişki",
+    householdTypeHousemates: "Ev arkadaşları",
+    householdTypeFamily: "Aile",
+    householdTypeOther: "Diğer",
     cannotJoinHouseholdNotExists: "Katılınamıyor, böyle bir ev yok",
     activeBadge: "Aktif",
     onboardingTitle: "Başka bir ev ekle",
@@ -573,6 +587,8 @@ const dictionary = {
       "Sei dentro! La tua richiesta per {household} è stata approvata.",
     notificationJoinRequestRejected:
       "La tua richiesta per unirti a {household} è stata rifiutata.",
+    notificationBudgetOverLimit:
+      "Attenzione: la tua spesa in {category} ha raggiunto €{spent} e ha superato il limite di €{limit}.",
     notificationActionFailed: "Non è stato possibile completare l’operazione.",
     navNotifications: "Notifiche",
     unread: "Nuova",
@@ -729,6 +745,11 @@ const dictionary = {
     deleteHousehold: "Elimina casa",
     roleOwner: "Proprietario",
     roleMember: "Membro",
+    householdType: "Tipo di casa",
+    householdTypeRomantic: "Relazione romantica",
+    householdTypeHousemates: "Coinquilini",
+    householdTypeFamily: "Famiglia",
+    householdTypeOther: "Altro",
     cannotJoinHouseholdNotExists:
       "Impossibile unirsi: la casa non esiste",
     activeBadge: "Attivo",

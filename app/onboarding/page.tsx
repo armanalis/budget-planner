@@ -6,6 +6,7 @@ import { ArrowLeft, Home, KeyRound } from "lucide-react";
 import { useState } from "react";
 import { useExpenses } from "@/context/ExpenseContext";
 import { useLanguage } from "@/context/LanguageContext";
+import type { Household } from "@/types";
 import { createClient } from "@/utils/supabase/client";
 
 const UUID_REGEX =
@@ -18,6 +19,8 @@ export default function OnboardingPage() {
   const [supabase] = useState(() => createClient());
 
   const [createName, setCreateName] = useState("");
+  const [householdType, setHouseholdType] =
+    useState<Household["household_type"]>("other");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -38,7 +41,7 @@ export default function OnboardingPage() {
     try {
       const { error: createErrorFromRpc } = await supabase.rpc(
         "create_household_and_join",
-        { p_name: trimmed },
+        { p_name: trimmed, p_household_type: householdType },
       );
 
       if (createErrorFromRpc) {
@@ -175,6 +178,22 @@ export default function OnboardingPage() {
             className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-blue-500 focus:ring-2 dark:border-gray-700 dark:bg-gray-800 dark:text-slate-100"
             required
           />
+
+          <label className="mt-4 block text-xs font-medium text-slate-600 dark:text-slate-400">
+            {t("householdType")}
+          </label>
+          <select
+            value={householdType}
+            onChange={(event) =>
+              setHouseholdType(event.target.value as Household["household_type"])
+            }
+            className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-blue-500 focus:ring-2 dark:border-gray-700 dark:bg-gray-800 dark:text-slate-100"
+          >
+            <option value="romantic_relationship">{t("householdTypeRomantic")}</option>
+            <option value="housemates">{t("householdTypeHousemates")}</option>
+            <option value="family">{t("householdTypeFamily")}</option>
+            <option value="other">{t("householdTypeOther")}</option>
+          </select>
 
           {createError && (
             <p className="mt-3 text-xs text-red-600 dark:text-red-400">

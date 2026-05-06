@@ -6,7 +6,7 @@ import { useExpenses } from "@/context/ExpenseContext";
 import { useLanguage } from "@/context/LanguageContext";
 
 export default function MembersPage() {
-  const { members, currentUser, household } = useExpenses();
+  const { members, memberRoles, currentUser, household } = useExpenses();
   const { t } = useLanguage();
 
   const memberCount = members.length;
@@ -52,7 +52,7 @@ export default function MembersPage() {
         <ul className="space-y-3">
           {members.map((member) => {
             const isCurrent = currentUser?.id === member.id;
-            const isOwner = household?.created_by === member.id;
+            const isOwner = memberRoles[member.id] === "owner";
             return (
               <li key={member.id}>
                 <Link

@@ -18,8 +18,27 @@
 CREATE TABLE IF NOT EXISTS public.households (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
+  household_type TEXT NOT NULL DEFAULT 'other'
+    CHECK (household_type IN ('romantic_relationship', 'housemates', 'family', 'other')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Backfill-safe migration for existing projects where households already exists.
+ALTER TABLE public.households
+  ADD COLUMN IF NOT EXISTS household_type TEXT NOT NULL DEFAULT 'other';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'households_household_type_check'
+      AND conrelid = 'public.households'::regclass
+  ) THEN
+    ALTER TABLE public.households
+      ADD CONSTRAINT households_household_type_check
+      CHECK (household_type IN ('romantic_relationship', 'housemates', 'family', 'other'));
+  END IF;
+END $$;
 
 -- Normalize names and enforce uniqueness globally so "Home", " home ",
 -- and "HOME" all point to exactly one household.
@@ -357,10 +376,13 @@ REVOKE ALL ON FUNCTION public.pending_request_household_ids() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.pending_request_household_ids() TO authenticated;
 
 -- Returns every household the current user belongs to.
+DROP FUNCTION IF EXISTS public.get_my_households();
+
 CREATE OR REPLACE FUNCTION public.get_my_households()
 RETURNS TABLE (
   id UUID,
   name TEXT,
+  household_type TEXT,
   created_by UUID,
   created_at TIMESTAMPTZ
 )
@@ -369,7 +391,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT h.id, h.name, h.created_by, h.created_at
+  SELECT h.id, h.name, h.household_type, h.created_by, h.created_at
   FROM public.households h
   JOIN public.household_members hm ON hm.household_id = h.id
   WHERE hm.user_id = auth.uid()
@@ -402,10 +424,13 @@ REVOKE ALL ON FUNCTION public.find_household_by_name(TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.find_household_by_name(TEXT) TO authenticated;
 
 -- Returns the household record the user is currently viewing.
+DROP FUNCTION IF EXISTS public.get_my_household();
+
 CREATE OR REPLACE FUNCTION public.get_my_household()
 RETURNS TABLE (
   id UUID,
   name TEXT,
+  household_type TEXT,
   created_by UUID,
   created_at TIMESTAMPTZ
 )
@@ -414,7 +439,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT h.id, h.name, h.created_by, h.created_at
+  SELECT h.id, h.name, h.household_type, h.created_by, h.created_at
   FROM public.households h
   JOIN public.users u ON u.active_household_id = h.id
   WHERE u.id = auth.uid()
@@ -588,6 +613,8 @@ DECLARE
   v_sub_limit NUMERIC(14, 4);
   v_month_main_spent NUMERIC(14, 4);
   v_month_sub_spent NUMERIC(14, 4);
+  v_is_over_main BOOLEAN := false;
+  v_is_over_sub BOOLEAN := false;
   v_main TEXT;
   v_sub TEXT;
 BEGIN
@@ -618,9 +645,7 @@ BEGIN
       AND to_char(e.date, 'YYYY-MM') = to_char(NEW.date, 'YYYY-MM')
       AND (TG_OP <> 'UPDATE' OR e.id <> NEW.id);
 
-    IF v_month_main_spent + NEW.amount > v_main_limit THEN
-      RAISE EXCEPTION 'Main category limit exceeded for %', v_main;
-    END IF;
+    v_is_over_main := v_month_main_spent + NEW.amount > v_main_limit;
   END IF;
 
   IF v_sub IS NOT NULL THEN
@@ -642,9 +667,37 @@ BEGIN
         AND to_char(e.date, 'YYYY-MM') = to_char(NEW.date, 'YYYY-MM')
         AND (TG_OP <> 'UPDATE' OR e.id <> NEW.id);
 
-      IF v_month_sub_spent + NEW.amount > v_sub_limit THEN
-        RAISE EXCEPTION 'Sub-category limit exceeded for %/%', v_main, v_sub;
-      END IF;
+      v_is_over_sub := v_month_sub_spent + NEW.amount > v_sub_limit;
+    END IF;
+  END IF;
+
+  -- Notify once per day per user/category to avoid spam.
+  IF v_is_over_sub OR v_is_over_main THEN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM public.notifications n
+      WHERE n.recipient_id = NEW.user_id
+        AND n.type = 'budget_over_limit'
+        AND (n.data->>'household_id') = NEW.household_id::text
+        AND (n.data->>'main_category') = v_main
+        AND COALESCE(n.data->>'sub_category', '') = COALESCE(v_sub, '')
+        AND n.created_at::date = now()::date
+    ) THEN
+      INSERT INTO public.notifications (recipient_id, type, data)
+      VALUES (
+        NEW.user_id,
+        'budget_over_limit',
+        jsonb_build_object(
+          'household_id', NEW.household_id,
+          'main_category', v_main,
+          'sub_category', v_sub,
+          'month', to_char(NEW.date, 'YYYY-MM'),
+          'spent_main', COALESCE(v_month_main_spent, 0) + NEW.amount,
+          'main_limit', v_main_limit,
+          'spent_sub', CASE WHEN v_sub IS NULL THEN NULL ELSE COALESCE(v_month_sub_spent, 0) + NEW.amount END,
+          'sub_limit', v_sub_limit
+        )
+      );
     END IF;
   END IF;
 
@@ -747,10 +800,16 @@ REVOKE ALL ON FUNCTION public.delete_subcategory_budget(TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.delete_subcategory_budget(TEXT, TEXT) TO authenticated;
 
 -- Create a new household, add the current user as member, and switch active.
-CREATE OR REPLACE FUNCTION public.create_household_and_join(p_name TEXT)
+DROP FUNCTION IF EXISTS public.create_household_and_join(TEXT);
+
+CREATE OR REPLACE FUNCTION public.create_household_and_join(
+  p_name TEXT,
+  p_household_type TEXT DEFAULT 'other'
+)
 RETURNS TABLE (
   id UUID,
   name TEXT,
+  household_type TEXT,
   created_by UUID
 )
 LANGUAGE plpgsql
@@ -759,8 +818,17 @@ SET search_path = public
 AS $$
 DECLARE
   v_name TEXT;
+  v_type TEXT;
   v_id UUID;
 BEGIN
+  v_type := trim(COALESCE(p_household_type, 'other'));
+  IF v_type = '' THEN
+    v_type := 'other';
+  END IF;
+  IF v_type NOT IN ('romantic_relationship', 'housemates', 'family', 'other') THEN
+    RAISE EXCEPTION 'Invalid household type';
+  END IF;
+
   IF auth.uid() IS NULL THEN
     RAISE EXCEPTION 'Not authenticated';
   END IF;
@@ -780,8 +848,8 @@ BEGIN
     RAISE EXCEPTION 'Another household already uses that name';
   END IF;
 
-  INSERT INTO public.households (name, created_by)
-  VALUES (v_name, auth.uid())
+  INSERT INTO public.households (name, household_type, created_by)
+  VALUES (v_name, v_type, auth.uid())
   RETURNING households.id INTO v_id;
 
   INSERT INTO public.household_members (user_id, household_id, role)
@@ -793,14 +861,14 @@ BEGIN
   WHERE id = auth.uid();
 
   RETURN QUERY
-  SELECT h.id, h.name, h.created_by
+  SELECT h.id, h.name, h.household_type, h.created_by
   FROM public.households h
   WHERE h.id = v_id;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.create_household_and_join(TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.create_household_and_join(TEXT) TO authenticated;
+REVOKE ALL ON FUNCTION public.create_household_and_join(TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.create_household_and_join(TEXT, TEXT) TO authenticated;
 
 -- USERS ---------------------------------------------------------------------
 DROP POLICY IF EXISTS users_select_own ON public.users;
@@ -1072,9 +1140,10 @@ BEGIN
     END IF;
   END IF;
 
-  INSERT INTO public.households (name, created_by)
+  INSERT INTO public.households (name, household_type, created_by)
   VALUES (
     COALESCE(v_household_name, v_display_name || '''s household'),
+    'other',
     NEW.id
   )
   RETURNING id INTO v_new_household_id;
@@ -1353,12 +1422,13 @@ WHERE u.id = au.id
 -- 2) Auto-provision a household + profile for any auth user that doesn't
 --    have a public.users row yet (e.g. accounts created before the trigger
 --    existed). Mirrors handle_new_user() for the "no household name" path.
-INSERT INTO public.households (name, created_by)
+INSERT INTO public.households (name, household_type, created_by)
 SELECT
   COALESCE(
     NULLIF(trim((au.raw_user_meta_data->>'household_name')::text), ''),
     split_part(COALESCE(au.email, ''), '@', 1) || '''s household'
   ) AS name,
+  'other'::TEXT AS household_type,
   au.id
 FROM auth.users au
 LEFT JOIN public.users u ON u.id = au.id

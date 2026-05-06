@@ -30,6 +30,7 @@ export interface Member {
 export interface Household {
   id: string;
   name: string;
+  household_type: "romantic_relationship" | "housemates" | "family" | "other";
   created_by: string | null;
 }
 
@@ -61,6 +62,7 @@ export type NotificationType =
   | "join_request_received"
   | "join_request_approved"
   | "join_request_rejected"
+  | "budget_over_limit"
   | (string & {});
 
 export interface AppNotification {

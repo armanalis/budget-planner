@@ -13,6 +13,7 @@ import type {
   Budget,
   Expense,
   Household,
+  HouseholdRole,
   Member,
   NewExpenseInput,
   PendingJoinRequest,
@@ -57,6 +58,7 @@ export type ProcessRecurringResult = {
 type ExpenseContextValue = {
   expenses: Expense[];
   members: Member[];
+  memberRoles: Record<string, HouseholdRole>;
   currentUser: Member | null;
   household: Household | null;
   /** Every household the current user belongs to. */
@@ -255,9 +257,18 @@ function normalizeMember(row: Record<string, unknown>): Member {
 }
 
 function normalizeHousehold(row: Record<string, unknown>): Household {
+  const rawType = String(row.household_type ?? "other");
+  const household_type: Household["household_type"] =
+    rawType === "romantic_relationship" ||
+    rawType === "housemates" ||
+    rawType === "family" ||
+    rawType === "other"
+      ? rawType
+      : "other";
   return {
     id: String(row.id),
     name: String(row.name ?? ""),
+    household_type,
     created_by: row.created_by == null ? null : String(row.created_by),
   };
 }
@@ -283,6 +294,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [memberRoles, setMemberRoles] = useState<Record<string, HouseholdRole>>({});
   const [currentUser, setCurrentUser] = useState<Member | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonth);
   const [loading, setLoading] = useState<boolean>(true);
@@ -333,6 +345,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
   const resetHouseholdState = useCallback(() => {
     setMembers([]);
+    setMemberRoles({});
     setExpenses([]);
     setHousehold(null);
     setBudgets([]);
@@ -359,7 +372,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         supabase
           .from("household_members")
           .select(
-            "user:users(id, active_household_id, display_name, created_at)",
+            "role, user:users(id, active_household_id, display_name, created_at)",
           )
           .eq("household_id", householdId),
         supabase.rpc("get_my_household"),
@@ -473,19 +486,27 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       if (membersError) {
         setError(membersError.message);
         setMembers([]);
+        setMemberRoles({});
       } else {
         type MemberRowEnvelope = {
+          role: HouseholdRole;
           user:
             | Record<string, unknown>
             | Record<string, unknown>[]
             | null;
         };
         const rows = (memberRows ?? []) as MemberRowEnvelope[];
+        const nextMemberRoles: Record<string, HouseholdRole> = {};
         const flattened = rows
-          .map((row) =>
-            Array.isArray(row.user) ? row.user[0] ?? null : row.user,
-          )
+          .map((row) => {
+            const user = Array.isArray(row.user) ? row.user[0] ?? null : row.user;
+            if (user?.id) {
+              nextMemberRoles[String(user.id)] = row.role;
+            }
+            return user;
+          })
           .filter((u): u is Record<string, unknown> => u != null);
+        setMemberRoles(nextMemberRoles);
         setMembers(
           flattened
             .map((u) => normalizeMember(u))
@@ -631,7 +652,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       // Fetch every household the user belongs to.
       const { data: householdRows, error: myHouseholdsError } = await supabase
         .from("household_members")
-        .select("household:households(id, name, created_by)")
+        .select("household:households(id, name, household_type, created_by)")
         .eq("user_id", signedInUserId);
 
       let resolvedHouseholds: Household[] = [];
@@ -1307,6 +1328,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     () => ({
       expenses,
       members,
+      memberRoles,
       currentUser,
       household,
       myHouseholds,
@@ -1347,6 +1369,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     [
       expenses,
       members,
+      memberRoles,
       currentUser,
       household,
       myHouseholds,

@@ -120,6 +120,11 @@ function NotificationCard({
   const householdName = getString(notification.data.household_name);
   const requesterName = getString(notification.data.requester_display_name);
   const requesterEmail = getString(notification.data.requester_email);
+  const mainCategory = getString(notification.data.main_category);
+  const subCategory = getString(notification.data.sub_category);
+  const categoryLabel = subCategory ? `${mainCategory} / ${subCategory}` : mainCategory;
+  const spent = Number(notification.data.spent_sub ?? notification.data.spent_main ?? 0);
+  const limit = Number(notification.data.sub_limit ?? notification.data.main_limit ?? 0);
   const requestId = getString(notification.data.request_id) || undefined;
 
   let body: string;
@@ -136,6 +141,13 @@ function NotificationCard({
       break;
     case "join_request_rejected":
       body = t("notificationJoinRequestRejected", { household: householdName });
+      break;
+    case "budget_over_limit":
+      body = t("notificationBudgetOverLimit", {
+        category: categoryLabel || mainCategory || t("budgetsTitle"),
+        spent: spent.toFixed(2),
+        limit: limit.toFixed(2),
+      });
       break;
     default:
       body = JSON.stringify(notification.data);
