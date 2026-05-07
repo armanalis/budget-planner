@@ -2,6 +2,8 @@
   "name": "budget-planner",
   "version": "0.1.0",
   "private": true,
+  "description": "Multi-household budget planner built with Next.js and Supabase.",
+  "license": "MIT",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

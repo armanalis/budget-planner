@@ -322,7 +322,9 @@ function LoginScreen({ contextError }: { contextError: string | null }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [sendingReset, setSendingReset] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -339,6 +341,34 @@ function LoginScreen({ contextError }: { contextError: string | null }) {
 
     if (error) {
       setErrorMessage(error.message || t("signInFailed"));
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    setErrorMessage(null);
+    setResetMessage(null);
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setErrorMessage(t("forgotPasswordEnterEmail"));
+      return;
+    }
+
+    setSendingReset(true);
+    try {
+      const supabase = createClient();
+      const origin =
+        typeof window !== "undefined" ? window.location.origin : "";
+      const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
+        redirectTo: `${origin}/reset-password`,
+      });
+      if (error) {
+        setErrorMessage(error.message || t("forgotPasswordFailed"));
+        return;
+      }
+      setResetMessage(t("forgotPasswordEmailSent"));
+    } finally {
+      setSendingReset(false);
     }
   };
 
@@ -396,6 +426,11 @@ function LoginScreen({ contextError }: { contextError: string | null }) {
             {errorMessage ?? contextError}
           </p>
         )}
+        {resetMessage && (
+          <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+            {resetMessage}
+          </p>
+        )}
 
         <button
           type="submit"
@@ -403,6 +438,14 @@ function LoginScreen({ contextError }: { contextError: string | null }) {
           className="mt-1 w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-blue-500 dark:hover:bg-blue-400"
         >
           {submitting ? t("signingIn") : t("signInButton")}
+        </button>
+        <button
+          type="button"
+          onClick={handleForgotPassword}
+          disabled={sendingReset}
+          className="text-center text-xs font-medium text-blue-600 hover:text-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:text-blue-400"
+        >
+          {sendingReset ? t("forgotPasswordSending") : t("forgotPassword")}
         </button>
 
         <p className="text-center text-xs text-slate-600 dark:text-slate-400">
@@ -477,6 +520,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { t } = useLanguage();
   const activeTitle = t(getPageTitleKey(pathname));
+  const loadingLogSentRef = useRef(false);
 
   const {
     currentUser,
@@ -491,6 +535,27 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   } = useExpenses();
 
   if (loading) {
+    if (!loadingLogSentRef.current) {
+      loadingLogSentRef.current = true;
+      // #region agent log
+      fetch("http://127.0.0.1:7863/ingest/47e3ad6d-fc70-4a01-9dfc-fd6ebfda7cca", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Debug-Session-Id": "b2f15c",
+        },
+        body: JSON.stringify({
+          sessionId: "b2f15c",
+          runId: "post-fix",
+          hypothesisId: "H3",
+          location: "components/app-shell.tsx:loading-branch",
+          message: "AppShell loading render",
+          data: { pathname, loadingText: t("loading") },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+    }
     return (
       <div className="mx-auto flex min-h-dvh w-full max-w-md items-center justify-center bg-slate-50 px-6 text-center dark:bg-gray-950">
         <p className="text-sm text-slate-500 dark:text-slate-400">{t("loading")}</p>
@@ -499,7 +564,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   if (!currentUser) {
-    if (pathname === "/sign-up") {
+    if (pathname === "/sign-up" || pathname === "/reset-password") {
       return <>{children}</>;
     }
     if (isAuthenticated && pendingRequest) {

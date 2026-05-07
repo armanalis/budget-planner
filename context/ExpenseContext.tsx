@@ -82,11 +82,15 @@ type ExpenseContextValue = {
   recurringExpenses: RecurringExpense[];
   addExpense: (input: NewExpenseInput) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
+  /** True when the user can remove their last added expense in this household (Add page). */
+  canUndoLastExpense: boolean;
+  undoLastExpense: () => Promise<void>;
   setSelectedMonth: (month: string) => void;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
   refreshNotifications: () => Promise<void>;
   markNotificationRead: (id: string) => Promise<void>;
+  deleteNotification: (id: string) => Promise<void>;
   approveJoinRequest: (requestId: string) => Promise<void>;
   rejectJoinRequest: (requestId: string) => Promise<void>;
   renameHousehold: (newName: string) => Promise<void>;
@@ -320,6 +324,14 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   const [myHouseholds, setMyHouseholds] = useState<Household[]>([]);
   const [activeHouseholdId, setActiveHouseholdId] = useState<string | null>(null);
   const [activeRole, setActiveRole] = useState<"owner" | "member" | null>(null);
+  /** Tracks the latest expense this session added via `addExpense` (undo typo). */
+  const [lastAddedExpenseId, setLastAddedExpenseId] = useState<string | null>(
+    null,
+  );
+
+  useEffect(() => {
+    setLastAddedExpenseId(null);
+  }, [activeHouseholdId]);
 
   const refreshNotifications = useCallback(async () => {
     if (!authUserId) {
@@ -887,6 +899,18 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     [supabase],
   );
 
+  const deleteNotification = useCallback(
+    async (id: string) => {
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+      const { error } = await supabase.from("notifications").delete().eq("id", id);
+      if (error) {
+        await refreshNotifications();
+        throw new Error(error.message);
+      }
+    },
+    [supabase, refreshNotifications],
+  );
+
   const approveJoinRequest = useCallback(
     async (requestId: string) => {
       const { error: rpcError } = await supabase.rpc("approve_join_request", {
@@ -939,7 +963,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
       const hierarchicalPayload = {
         household_id: activeHouseholdId,
-        user_id: input.user_id,
+        user_id: currentUser.id,
         amount: input.amount,
         main_category: input.main_category,
         sub_category: input.sub_category,
@@ -951,7 +975,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
       const legacyPayload = {
         household_id: activeHouseholdId,
-        user_id: input.user_id,
+        user_id: currentUser.id,
         amount: input.amount,
         category: input.category,
         date: input.date,
@@ -998,6 +1022,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
       const inserted = normalizeExpense(data as unknown as Record<string, unknown>);
       setExpenses((prev) => [inserted, ...prev]);
+      setLastAddedExpenseId(inserted.id);
     },
     [supabase, currentUser, activeHouseholdId, supportsExpenseHierarchy],
   );
@@ -1012,9 +1037,27 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         throw new Error(deleteError.message);
       }
       setExpenses((prev) => prev.filter((expense) => expense.id !== id));
+      setLastAddedExpenseId((prev) => (prev === id ? null : prev));
     },
     [supabase],
   );
+
+  const canUndoLastExpense = useMemo(() => {
+    if (!lastAddedExpenseId || !currentUser) return false;
+    return expenses.some(
+      (e) => e.id === lastAddedExpenseId && e.user_id === currentUser.id,
+    );
+  }, [lastAddedExpenseId, expenses, currentUser]);
+
+  const undoLastExpense = useCallback(async () => {
+    if (!lastAddedExpenseId || !currentUser) return;
+    const row = expenses.find((e) => e.id === lastAddedExpenseId);
+    if (!row || row.user_id !== currentUser.id) {
+      setLastAddedExpenseId(null);
+      return;
+    }
+    await deleteExpense(lastAddedExpenseId);
+  }, [lastAddedExpenseId, currentUser, expenses, deleteExpense]);
 
   const updateBudget = useCallback(
     async (category: string, limitAmount: number) => {
@@ -1064,7 +1107,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
       const hierarchicalPayload = {
         household_id: activeHouseholdId,
-        user_id: input.user_id,
+        user_id: currentUser.id,
         amount: input.amount,
         main_category: input.main_category,
         sub_category: input.sub_category,
@@ -1076,7 +1119,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
       const legacyPayload = {
         household_id: activeHouseholdId,
-        user_id: input.user_id,
+        user_id: currentUser.id,
         amount: input.amount,
         category: input.category,
         note: input.note,
@@ -1160,9 +1203,11 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       const currentMonth = getCurrentMonth();
       const today = getTodayDate();
 
-      const due = recurringExpenses.filter(
-        (template) => template.next_process_month <= currentMonth,
-      );
+      const due = recurringExpenses.filter((template) => {
+        if (template.next_process_month > currentMonth) return false;
+        if (template.is_joint) return true;
+        return template.user_id === currentUser.id;
+      });
 
       if (due.length === 0) {
         return { processedCount: 0 };
@@ -1171,7 +1216,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       const expenseRows = supportsExpenseHierarchy
         ? due.map((template) => ({
             household_id: activeHouseholdId,
-            user_id: template.user_id,
+            user_id: currentUser.id,
             amount: template.amount,
             main_category: template.main_category,
             sub_category: template.sub_category,
@@ -1182,7 +1227,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           }))
         : due.map((template) => ({
             household_id: activeHouseholdId,
-            user_id: template.user_id,
+            user_id: currentUser.id,
             amount: template.amount,
             category: template.category,
             date: today,
@@ -1202,7 +1247,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         setSupportsExpenseHierarchy(false);
         const legacyRows = due.map((template) => ({
           household_id: activeHouseholdId,
-          user_id: template.user_id,
+          user_id: currentUser.id,
           amount: template.amount,
           category: template.category,
           date: today,
@@ -1345,11 +1390,14 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       recurringExpenses,
       addExpense,
       deleteExpense,
+      canUndoLastExpense,
+      undoLastExpense,
       setSelectedMonth,
       signOut,
       refresh,
       refreshNotifications,
       markNotificationRead,
+      deleteNotification,
       approveJoinRequest,
       rejectJoinRequest,
       renameHousehold,
@@ -1386,10 +1434,13 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       recurringExpenses,
       addExpense,
       deleteExpense,
+      canUndoLastExpense,
+      undoLastExpense,
       signOut,
       refresh,
       refreshNotifications,
       markNotificationRead,
+      deleteNotification,
       approveJoinRequest,
       rejectJoinRequest,
       renameHousehold,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, X, Bell } from "lucide-react";
 import { useExpenses } from "@/context/ExpenseContext";
 import { useLanguage } from "@/context/LanguageContext";
@@ -13,10 +13,17 @@ function getString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+/** True when approve/reject RPC failed because nothing was left to do — still remove the stale card. */
+function isOrphanedJoinRpcError(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes("already decided") || m.includes("request not found");
+}
+
 export default function NotificationsPage() {
   const {
     notifications,
     markNotificationRead,
+    deleteNotification,
     approveJoinRequest,
     rejectJoinRequest,
   } = useExpenses();
@@ -29,7 +36,7 @@ export default function NotificationsPage() {
       <div
         className={`${cardClass} flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400`}
       >
-        <Bell className="h-5 w-5" aria-hidden />
+        <Bell className="h-4 w-4 shrink-0" aria-hidden />
         <span>{t("notificationsEmpty")}</span>
       </div>
     );
@@ -61,12 +68,20 @@ export default function NotificationsPage() {
             });
             try {
               await approveJoinRequest(requestId);
-              await markNotificationRead(notification.id);
+              await deleteNotification(notification.id);
             } catch (err) {
+              const msg = err instanceof Error ? err.message : "";
+              if (isOrphanedJoinRpcError(msg)) {
+                try {
+                  await deleteNotification(notification.id);
+                } catch {
+                  /* ignore */
+                }
+                return;
+              }
               setActionErrorById((prev) => ({
                 ...prev,
-                [notification.id]:
-                  err instanceof Error ? err.message : t("notificationActionFailed"),
+                [notification.id]: msg || t("notificationActionFailed"),
               }));
             } finally {
               setPendingActionId(null);
@@ -81,12 +96,20 @@ export default function NotificationsPage() {
             });
             try {
               await rejectJoinRequest(requestId);
-              await markNotificationRead(notification.id);
+              await deleteNotification(notification.id);
             } catch (err) {
+              const msg = err instanceof Error ? err.message : "";
+              if (isOrphanedJoinRpcError(msg)) {
+                try {
+                  await deleteNotification(notification.id);
+                } catch {
+                  /* ignore */
+                }
+                return;
+              }
               setActionErrorById((prev) => ({
                 ...prev,
-                [notification.id]:
-                  err instanceof Error ? err.message : t("notificationActionFailed"),
+                [notification.id]: msg || t("notificationActionFailed"),
               }));
             } finally {
               setPendingActionId(null);
@@ -176,6 +199,7 @@ function NotificationCard({
 
         {notification.type === "join_request_received" && (
           <JoinRequestActions
+            notificationId={notification.id}
             notificationData={notification.data}
             requestIdFromMetadata={requestId}
             isBusy={isBusy}
@@ -190,7 +214,7 @@ function NotificationCard({
           </p>
         )}
 
-        {!notification.is_read && (
+        {!notification.is_read && notification.type !== "join_request_received" && (
           <button
             type="button"
             onClick={() => void onMarkRead()}
@@ -205,12 +229,14 @@ function NotificationCard({
 }
 
 function JoinRequestActions({
+  notificationId,
   notificationData,
   requestIdFromMetadata,
   isBusy,
   onApprove,
   onReject,
 }: {
+  notificationId: string;
   notificationData: Record<string, unknown>;
   requestIdFromMetadata: string | undefined;
   isBusy: boolean;
@@ -218,23 +244,54 @@ function JoinRequestActions({
   onReject: (requestId: string) => void | Promise<void>;
 }) {
   const { t } = useLanguage();
-  const { ownsHousehold, currentUser, refresh } = useExpenses();
+  const { currentUser, deleteNotification } = useExpenses();
   const [resolvedRequestId, setResolvedRequestId] = useState<string | undefined>(
     requestIdFromMetadata,
   );
   const [lookupError, setLookupError] = useState<string | null>(null);
+  const [isOwnerOfHousehold, setIsOwnerOfHousehold] = useState(false);
+  const dismissedStaleRef = useRef(false);
 
   const householdId = getString(notificationData.household_id);
   const requesterId = getString(notificationData.requester_id);
 
-  // Backfill missing request_id once (older notifications may not include it).
-  if (
-    !resolvedRequestId &&
-    !lookupError &&
-    ownsHousehold &&
-    householdId &&
-    requesterId
-  ) {
+  useEffect(() => {
+    if (!currentUser?.id || !householdId) {
+      setIsOwnerOfHousehold(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const { createClient } = await import("@/utils/supabase/client");
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("household_members")
+        .select("role")
+        .eq("household_id", householdId)
+        .eq("user_id", currentUser.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        setIsOwnerOfHousehold(false);
+        return;
+      }
+      setIsOwnerOfHousehold(data?.role === "owner");
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id, householdId]);
+
+  useEffect(() => {
+    if (resolvedRequestId || lookupError || !householdId || !requesterId) {
+      return;
+    }
+    if (!isOwnerOfHousehold) {
+      return;
+    }
+
+    let cancelled = false;
     void (async () => {
       const { createClient } = await import("@/utils/supabase/client");
       const supabase = createClient();
@@ -247,40 +304,65 @@ function JoinRequestActions({
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
+      if (cancelled) return;
       if (error) {
         setLookupError(error.message);
         return;
       }
       if (data) {
         setResolvedRequestId(String(data.id));
-      } else {
-        setLookupError(t("notificationActionFailed"));
-        await refresh();
+      } else if (!dismissedStaleRef.current) {
+        dismissedStaleRef.current = true;
+        void deleteNotification(notificationId);
       }
     })();
-  }
 
-  if (!ownsHousehold || !currentUser) return null;
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    resolvedRequestId,
+    lookupError,
+    isOwnerOfHousehold,
+    householdId,
+    requesterId,
+    deleteNotification,
+    notificationId,
+  ]);
+
+  if (!currentUser) return null;
 
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
+      {isOwnerOfHousehold && (
+        <>
+          <button
+            type="button"
+            disabled={isBusy || !resolvedRequestId}
+            onClick={() => resolvedRequestId && void onApprove(resolvedRequestId)}
+            className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Check className="h-3.5 w-3.5" aria-hidden />
+            {t("notificationApprove")}
+          </button>
+          <button
+            type="button"
+            disabled={isBusy || !resolvedRequestId}
+            onClick={() => resolvedRequestId && void onReject(resolvedRequestId)}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-800 dark:text-slate-100 dark:hover:bg-gray-700"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+            {t("notificationReject")}
+          </button>
+        </>
+      )}
       <button
         type="button"
-        disabled={isBusy || !resolvedRequestId}
-        onClick={() => resolvedRequestId && void onApprove(resolvedRequestId)}
-        className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+        disabled={isBusy}
+        onClick={() => void deleteNotification(notificationId)}
+        className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-3 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50 dark:border-gray-600 dark:text-slate-300 dark:hover:bg-gray-800"
       >
-        <Check className="h-3.5 w-3.5" aria-hidden />
-        {t("notificationApprove")}
-      </button>
-      <button
-        type="button"
-        disabled={isBusy || !resolvedRequestId}
-        onClick={() => resolvedRequestId && void onReject(resolvedRequestId)}
-        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-800 dark:text-slate-100 dark:hover:bg-gray-700"
-      >
-        <X className="h-3.5 w-3.5" aria-hidden />
-        {t("notificationReject")}
+        {t("notificationDismiss")}
       </button>
       {lookupError && (
         <span className="text-xs font-medium text-red-600 dark:text-red-400">

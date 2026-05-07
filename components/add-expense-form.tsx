@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { NewExpenseInput } from "@/types";
 import { useExpenses } from "@/context/ExpenseContext";
 import {
@@ -41,7 +41,6 @@ export default function AddExpenseForm({
     addExpense,
     createRecurringExpense,
     currentUser,
-    members,
     subcategoryBudgets,
     supportsExpenseHierarchy,
     supportsSubcategoryBudgetTable,
@@ -50,6 +49,14 @@ export default function AddExpenseForm({
 
   const [amount, setAmount] = useState("");
   const [ledger, setLedger] = useState<string>(() => currentUser?.id ?? "");
+
+  useEffect(() => {
+    if (!currentUser) return;
+    setLedger((prev) => {
+      if (prev === JOINT_OPTION_VALUE || prev === currentUser.id) return prev;
+      return currentUser.id;
+    });
+  }, [currentUser]);
   const [mainCategory, setMainCategory] =
     useState<MainCategoryEnglish>(DEFAULT_MAIN_CATEGORY);
   const [legacyCategory, setLegacyCategory] =
@@ -96,7 +103,10 @@ export default function AddExpenseForm({
     const mergedNote = [note.trim(), conversionNote].filter(Boolean).join(" ");
 
     const isJoint = ledger === JOINT_OPTION_VALUE;
-    const userId = isJoint ? currentUser.id : ledger || currentUser.id;
+    if (!isJoint && ledger !== currentUser.id) {
+      return;
+    }
+    const userId = currentUser.id;
 
     const input: NewExpenseInput = supportsExpenseHierarchy
       ? (() => {
@@ -226,23 +236,21 @@ export default function AddExpenseForm({
           </label>
         )}
 
-        <label className="block">
-          <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
-            {t("ledger")}
-          </span>
-          <select
-            value={ledger}
-            onChange={(event) => setLedger(event.target.value)}
-            className={inputClassName}
-          >
-            {members.map((member) => (
-              <option key={member.id} value={member.id}>
-                {member.display_name}
-              </option>
-            ))}
-            <option value={JOINT_OPTION_VALUE}>{t("jointAccountTitle")}</option>
-          </select>
-        </label>
+        {currentUser && (
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
+              {t("ledger")}
+            </span>
+            <select
+              value={ledger}
+              onChange={(event) => setLedger(event.target.value)}
+              className={inputClassName}
+            >
+              <option value={currentUser.id}>{currentUser.display_name}</option>
+              <option value={JOINT_OPTION_VALUE}>{t("jointAccountTitle")}</option>
+            </select>
+          </label>
+        )}
 
         {supportsExpenseHierarchy ? (
           <>

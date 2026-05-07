@@ -3,6 +3,7 @@
 /** Add expense page with live TRY→EUR conversion fallback. */
 import { useEffect, useState } from "react";
 import AddExpenseForm from "@/components/add-expense-form";
+import UndoLastExpenseCard from "@/components/undo-last-expense-card";
 
 const FALLBACK_EXCHANGE_RATE = 52.72;
 
@@ -58,12 +59,13 @@ export default function AddPage() {
   }, []);
 
   return (
-    <div className="mx-auto w-full max-w-2xl">
+    <div className="mx-auto w-full max-w-2xl space-y-4">
       <AddExpenseForm
         liveExchangeRate={liveExchangeRate}
         isFetchingLiveRate={isFetchingLiveRate}
         isUsingFallbackRate={isUsingFallbackRate}
       />
+      <UndoLastExpenseCard />
     </div>
   );
 }

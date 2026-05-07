@@ -922,13 +922,9 @@ CREATE POLICY hm_select_self
 ON public.household_members FOR SELECT TO authenticated
 USING (household_id IN (SELECT public.current_user_household_ids()));
 
+-- Membership rows must be created only via SECURITY DEFINER flows (household
+-- creation, join approval, or signup provisioning) — never by pasting a UUID.
 DROP POLICY IF EXISTS hm_insert_self ON public.household_members;
-CREATE POLICY hm_insert_self
-ON public.household_members FOR INSERT TO authenticated
-WITH CHECK (
-  user_id = auth.uid()
-  AND role = 'member'
-);
 
 DROP POLICY IF EXISTS hm_delete_self ON public.household_members;
 CREATE POLICY hm_delete_self
@@ -947,7 +943,10 @@ USING (
 DROP POLICY IF EXISTS expenses_insert_same_household ON public.expenses;
 CREATE POLICY expenses_insert_same_household
 ON public.expenses FOR INSERT TO authenticated
-WITH CHECK (household_id = public.current_household_id());
+WITH CHECK (
+  household_id = public.current_household_id()
+  AND user_id = auth.uid()
+);
 
 DROP POLICY IF EXISTS expenses_delete_same_household ON public.expenses;
 CREATE POLICY expenses_delete_same_household
@@ -1056,18 +1055,30 @@ USING (household_id = public.current_household_id());
 DROP POLICY IF EXISTS recurring_insert_same_household ON public.recurring_expenses;
 CREATE POLICY recurring_insert_same_household
 ON public.recurring_expenses FOR INSERT TO authenticated
-WITH CHECK (household_id = public.current_household_id());
+WITH CHECK (
+  household_id = public.current_household_id()
+  AND user_id = auth.uid()
+);
 
 DROP POLICY IF EXISTS recurring_update_same_household ON public.recurring_expenses;
 CREATE POLICY recurring_update_same_household
 ON public.recurring_expenses FOR UPDATE TO authenticated
-USING (household_id = public.current_household_id())
-WITH CHECK (household_id = public.current_household_id());
+USING (
+  household_id = public.current_household_id()
+  AND user_id = auth.uid()
+)
+WITH CHECK (
+  household_id = public.current_household_id()
+  AND user_id = auth.uid()
+);
 
 DROP POLICY IF EXISTS recurring_delete_same_household ON public.recurring_expenses;
 CREATE POLICY recurring_delete_same_household
 ON public.recurring_expenses FOR DELETE TO authenticated
-USING (household_id = public.current_household_id());
+USING (
+  household_id = public.current_household_id()
+  AND user_id = auth.uid()
+);
 
 -- Add messages to the realtime publication so the client can subscribe.
 DO $$
@@ -1102,6 +1113,7 @@ DECLARE
   v_existing_household_name TEXT;
   v_existing_owner_id UUID;
   v_new_household_id UUID;
+  v_join_request_id UUID;
 BEGIN
   v_display_name := COALESCE(
     NULLIF(trim(NEW.raw_user_meta_data->>'display_name'), ''),
@@ -1123,7 +1135,8 @@ BEGIN
         household_id, requester_id, requester_display_name, status
       ) VALUES (
         v_existing_household_id, NEW.id, v_display_name, 'pending'
-      );
+      )
+      RETURNING id INTO v_join_request_id;
 
       INSERT INTO public.notifications (recipient_id, type, data)
       SELECT
@@ -1134,7 +1147,8 @@ BEGIN
           'household_name', v_existing_household_name,
           'requester_id', NEW.id,
           'requester_display_name', v_display_name,
-          'requester_email', COALESCE(NEW.email, '')
+          'requester_email', COALESCE(NEW.email, ''),
+          'request_id', v_join_request_id
         )
       FROM public.household_members hm
       WHERE hm.household_id = v_existing_household_id
@@ -1218,6 +1232,18 @@ BEGIN
   SET status = 'approved', decided_at = now(), decided_by = auth.uid()
   WHERE id = p_request_id;
 
+  -- Drop every owner's "someone wants to join" card for this request (all co-owners).
+  DELETE FROM public.notifications n
+  WHERE n.type = 'join_request_received'
+    AND (
+      (NULLIF(btrim(n.data->>'request_id'), ''))::uuid = p_request_id
+      OR (
+        NULLIF(btrim(n.data->>'request_id'), '') IS NULL
+        AND (n.data->>'household_id')::uuid = v_req.household_id
+        AND (n.data->>'requester_id')::uuid = v_req.requester_id
+      )
+    );
+
   INSERT INTO public.notifications (recipient_id, type, data)
   VALUES (
     v_req.requester_id,
@@ -1265,6 +1291,17 @@ BEGIN
   SET status = 'rejected', decided_at = now(), decided_by = auth.uid()
   WHERE id = p_request_id;
 
+  DELETE FROM public.notifications n
+  WHERE n.type = 'join_request_received'
+    AND (
+      (NULLIF(btrim(n.data->>'request_id'), ''))::uuid = p_request_id
+      OR (
+        NULLIF(btrim(n.data->>'request_id'), '') IS NULL
+        AND (n.data->>'household_id')::uuid = v_req.household_id
+        AND (n.data->>'requester_id')::uuid = v_req.requester_id
+      )
+    );
+
   INSERT INTO public.notifications (recipient_id, type, data)
   VALUES (
     v_req.requester_id,
@@ -1278,6 +1315,98 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.reject_join_request(UUID) TO authenticated;
+
+-- Logged-in user asks to join an existing household by its unique display name.
+-- Creates a pending row and notifies each owner (same payload shape as signup join).
+CREATE OR REPLACE FUNCTION public.request_join_household_by_name(p_name TEXT)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid UUID := auth.uid();
+  v_clean TEXT;
+  v_household_id UUID;
+  v_household_name TEXT;
+  v_display TEXT;
+  v_request_id UUID;
+  v_email TEXT;
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  v_clean := trim(COALESCE(p_name, ''));
+  IF char_length(v_clean) = 0 THEN
+    RAISE EXCEPTION 'Household name cannot be empty';
+  END IF;
+
+  SELECT h.id, h.name INTO v_household_id, v_household_name
+  FROM public.households h
+  WHERE lower(trim(h.name)) = lower(trim(v_clean))
+  ORDER BY h.created_at ASC
+  LIMIT 1;
+
+  IF v_household_id IS NULL THEN
+    RAISE EXCEPTION 'No household found with that name';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.household_members hm
+    WHERE hm.household_id = v_household_id
+      AND hm.user_id = v_uid
+  ) THEN
+    RAISE EXCEPTION 'Already a member of this household';
+  END IF;
+
+  SELECT u.display_name INTO v_display
+  FROM public.users u
+  WHERE u.id = v_uid;
+
+  SELECT email INTO v_email FROM auth.users WHERE id = v_uid;
+
+  v_display := COALESCE(
+    NULLIF(trim(v_display), ''),
+    split_part(COALESCE(v_email, ''), '@', 1),
+    'Member'
+  );
+
+  BEGIN
+    INSERT INTO public.household_join_requests (
+      household_id, requester_id, requester_display_name, status
+    ) VALUES (
+      v_household_id, v_uid, v_display, 'pending'
+    )
+    RETURNING id INTO v_request_id;
+  EXCEPTION
+    WHEN unique_violation THEN
+      RAISE EXCEPTION 'You already have a pending request for this household';
+  END;
+
+  INSERT INTO public.notifications (recipient_id, type, data)
+  SELECT
+    hm.user_id,
+    'join_request_received',
+    jsonb_build_object(
+      'household_id', v_household_id,
+      'household_name', v_household_name,
+      'requester_id', v_uid,
+      'requester_display_name', v_display,
+      'requester_email', COALESCE(v_email, ''),
+      'request_id', v_request_id
+    )
+  FROM public.household_members hm
+  WHERE hm.household_id = v_household_id
+    AND hm.role = 'owner';
+
+  RETURN v_request_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.request_join_household_by_name(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.request_join_household_by_name(TEXT) TO authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Owner-only RPC: rename the user's currently active household.

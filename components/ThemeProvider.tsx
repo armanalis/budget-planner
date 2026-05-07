@@ -11,6 +11,27 @@ function ThemeStateSync({ children }: { children: ReactNode }) {
   const { theme, setTheme } = useTheme();
 
   useLayoutEffect(() => {
+    // #region agent log
+    fetch("http://127.0.0.1:7863/ingest/47e3ad6d-fc70-4a01-9dfc-fd6ebfda7cca", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "b2f15c",
+      },
+      body: JSON.stringify({
+        sessionId: "b2f15c",
+        runId: "post-fix",
+        hypothesisId: "H4",
+        location: "components/ThemeProvider.tsx:useLayoutEffect",
+        message: "Theme sync effect",
+        data: {
+          theme,
+          htmlHasDarkClass: document.documentElement.classList.contains("dark"),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     if (theme === "light" || theme === "dark") return;
 
     try {
