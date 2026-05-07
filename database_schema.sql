@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS public.households (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Backfill-safe migration for existing projects where households already exists.
+-- Backfill-safe migration for existing projects where `households` already exists.
 ALTER TABLE public.households
   ADD COLUMN IF NOT EXISTS household_type TEXT NOT NULL DEFAULT 'other';
 
@@ -274,7 +274,7 @@ ALTER TABLE public.recurring_expenses
 ALTER TABLE public.recurring_expenses
   ALTER COLUMN main_category SET NOT NULL;
 
--- Household join requests: a sign-up that targets an existing household name.
+-- Household join requests: sign-ups targeting an existing household name.
 CREATE TABLE IF NOT EXISTS public.household_join_requests (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   household_id UUID NOT NULL REFERENCES public.households (id) ON DELETE CASCADE,
@@ -485,9 +485,9 @@ BEGIN
     RAISE EXCEPTION 'Not a member of this household';
   END IF;
 
-  UPDATE public.users
+  UPDATE public.users u
   SET active_household_id = p_household_id
-  WHERE id = auth.uid();
+  WHERE u.id = auth.uid();
 END;
 $$;
 
@@ -842,8 +842,9 @@ BEGIN
   END IF;
 
   IF EXISTS (
-    SELECT 1 FROM public.households
-    WHERE lower(trim(name)) = lower(trim(v_name))
+    SELECT 1
+    FROM public.households h
+    WHERE lower(trim(h.name)) = lower(trim(v_name))
   ) THEN
     RAISE EXCEPTION 'Another household already uses that name';
   END IF;
@@ -856,9 +857,9 @@ BEGIN
   VALUES (auth.uid(), v_id, 'owner')
   ON CONFLICT DO NOTHING;
 
-  UPDATE public.users
+  UPDATE public.users u
   SET active_household_id = v_id
-  WHERE id = auth.uid();
+  WHERE u.id = auth.uid();
 
   RETURN QUERY
   SELECT h.id, h.name, h.household_type, h.created_by
@@ -938,7 +939,10 @@ USING (user_id = auth.uid());
 DROP POLICY IF EXISTS expenses_select_same_household ON public.expenses;
 CREATE POLICY expenses_select_same_household
 ON public.expenses FOR SELECT TO authenticated
-USING (household_id = public.current_household_id());
+USING (
+  household_id = public.current_household_id()
+  AND (is_joint = true OR user_id = auth.uid())
+);
 
 DROP POLICY IF EXISTS expenses_insert_same_household ON public.expenses;
 CREATE POLICY expenses_insert_same_household
@@ -1107,11 +1111,11 @@ BEGIN
   v_household_name := NULLIF(trim(NEW.raw_user_meta_data->>'household_name'), '');
 
   IF v_household_name IS NOT NULL THEN
-    SELECT id, name, created_by
+    SELECT h.id, h.name, h.created_by
     INTO v_existing_household_id, v_existing_household_name, v_existing_owner_id
-    FROM public.households
-    WHERE lower(trim(name)) = lower(trim(v_household_name))
-    ORDER BY created_at ASC
+    FROM public.households h
+    WHERE lower(trim(h.name)) = lower(trim(v_household_name))
+    ORDER BY h.created_at ASC
     LIMIT 1;
 
     IF v_existing_household_id IS NOT NULL THEN
@@ -1121,20 +1125,20 @@ BEGIN
         v_existing_household_id, NEW.id, v_display_name, 'pending'
       );
 
-      IF v_existing_owner_id IS NOT NULL THEN
-        INSERT INTO public.notifications (recipient_id, type, data)
-        VALUES (
-          v_existing_owner_id,
-          'join_request_received',
-          jsonb_build_object(
-            'household_id', v_existing_household_id,
-            'household_name', v_existing_household_name,
-            'requester_id', NEW.id,
-            'requester_display_name', v_display_name,
-            'requester_email', COALESCE(NEW.email, '')
-          )
-        );
-      END IF;
+      INSERT INTO public.notifications (recipient_id, type, data)
+      SELECT
+        hm.user_id,
+        'join_request_received',
+        jsonb_build_object(
+          'household_id', v_existing_household_id,
+          'household_name', v_existing_household_name,
+          'requester_id', NEW.id,
+          'requester_display_name', v_display_name,
+          'requester_email', COALESCE(NEW.email, '')
+        )
+      FROM public.household_members hm
+      WHERE hm.household_id = v_existing_household_id
+        AND hm.role = 'owner';
 
       RETURN NEW;
     END IF;
@@ -1318,9 +1322,9 @@ BEGIN
   END IF;
 
   IF EXISTS (
-    SELECT 1 FROM public.households
-    WHERE id <> v_household_id
-      AND lower(trim(name)) = lower(trim(v_clean_name))
+    SELECT 1 FROM public.households h
+    WHERE h.id <> v_household_id
+      AND lower(trim(h.name)) = lower(trim(v_clean_name))
   ) THEN
     RAISE EXCEPTION 'Another household already uses that name';
   END IF;

@@ -1,6 +1,6 @@
 "use client";
 
-/** Expense categories: UI labels are localized in `AddExpenseForm`; `Expense.category` stays English. */
+/** Add expense page with live TRY→EUR conversion fallback. */
 import { useEffect, useState } from "react";
 import AddExpenseForm from "@/components/add-expense-form";
 

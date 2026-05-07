@@ -227,8 +227,7 @@ function JoinRequestActions({
   const householdId = getString(notificationData.household_id);
   const requesterId = getString(notificationData.requester_id);
 
-  // The trigger doesn't include the request_id in notification data, so we
-  // look it up by (household_id, requester_id) once when the user is owner.
+  // Backfill missing request_id once (older notifications may not include it).
   if (
     !resolvedRequestId &&
     !lookupError &&

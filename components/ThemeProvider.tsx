@@ -6,13 +6,7 @@ import type { ReactNode } from "react";
 
 const STORAGE_KEY = "budget-planner-ui-theme";
 
-/**
- * next-themes initializes `theme` with `undefined` on the server (it cannot read
- * localStorage). That undefined state hydrates to the client, so `resolvedTheme`
- * stays out of sync with the inline script that already applied `dark` on
- * `<html>`. Clicks then call `setTheme("dark")` while the UI is already dark.
- * Sync once on the client from storage / the real `classList`.
- */
+/** Keep `next-themes` in sync with what is already on `<html>` after hydration. */
 function ThemeStateSync({ children }: { children: ReactNode }) {
   const { theme, setTheme } = useTheme();
 
@@ -26,7 +20,7 @@ function ThemeStateSync({ children }: { children: ReactNode }) {
         return;
       }
     } catch {
-      /* ignore */
+      /* ignore localStorage access errors */
     }
 
     setTheme(

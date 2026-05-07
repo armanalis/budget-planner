@@ -24,7 +24,7 @@ import { createClient } from "@/utils/supabase/client";
 
 type SessionLikeError = { message?: string | null };
 
-/** True when cookies/storage hold a Supabase session the server no longer accepts. */
+/** True when local auth state is stale (invalid refresh token/JWT). */
 function isStaleRefreshSessionError(error: SessionLikeError | null): boolean {
   const message = error?.message?.toLowerCase() ?? "";
   if (!message) return false;
@@ -61,9 +61,9 @@ type ExpenseContextValue = {
   memberRoles: Record<string, HouseholdRole>;
   currentUser: Member | null;
   household: Household | null;
-  /** Every household the current user belongs to. */
+  /** Households the current user belongs to. */
   myHouseholds: Household[];
-  /** The household the current user is currently looking at. */
+  /** Currently selected household. */
   activeHouseholdId: string | null;
   selectedMonth: string;
   loading: boolean;
@@ -75,9 +75,9 @@ type ExpenseContextValue = {
   ownsHousehold: boolean;
   budgets: Budget[];
   subcategoryBudgets: SubcategoryBudget[];
-  /** False when `expenses` / `recurring_expenses` rows lack main/sub columns (run latest SQL). */
+  /** False when expenses tables are missing main/sub category columns. */
   supportsExpenseHierarchy: boolean;
-  /** False when `subcategory_budgets` table is missing. */
+  /** False when `subcategory_budgets` does not exist yet. */
   supportsSubcategoryBudgetTable: boolean;
   recurringExpenses: RecurringExpense[];
   addExpense: (input: NewExpenseInput) => Promise<void>;
@@ -90,7 +90,7 @@ type ExpenseContextValue = {
   approveJoinRequest: (requestId: string) => Promise<void>;
   rejectJoinRequest: (requestId: string) => Promise<void>;
   renameHousehold: (newName: string) => Promise<void>;
-  /** Deletes active household (owners only). Returns remaining membership count for this user. */
+  /** Owner-only. Deletes active household and returns remaining memberships for this user. */
   deleteActiveHousehold: () => Promise<number>;
   updateBudget: (category: string, limitAmount: number) => Promise<void>;
   upsertSubcategoryBudget: (
@@ -105,7 +105,7 @@ type ExpenseContextValue = {
   createRecurringExpense: (input: NewRecurringExpenseInput) => Promise<void>;
   deleteRecurringExpense: (id: string) => Promise<void>;
   processRecurringExpenses: () => Promise<ProcessRecurringResult>;
-  /** Switch the active household to one the user already belongs to. */
+  /** Switches to another household the user already belongs to. */
   switchHousehold: (newHouseholdId: string) => Promise<void>;
   /** Role in the active household (`household_members.role`). */
   activeRole: "owner" | "member" | null;
@@ -138,7 +138,7 @@ const RECURRING_SELECT_HIERARCHY =
 const RECURRING_SELECT_LEGACY =
   "id, household_id, user_id, amount, category, note, is_joint, next_process_month";
 
-/** PostgREST / schema-cache messages when columns or tables were not migrated yet. */
+/** Detects schema-cache errors for not-yet-migrated tables/columns. */
 function isExpenseHierarchySchemaError(message?: string | null): boolean {
   const m = (message ?? "").toLowerCase();
   return (
@@ -356,10 +356,8 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   /**
-   * Loads everything that's scoped to ONE specific household: members,
-   * expenses, the household record itself, budgets, and recurring templates.
-   * RLS uses `current_household_id()` (= users.active_household_id), so we
-   * always scope by `householdId` explicitly to keep the queries deterministic.
+   * Loads household-scoped data (members, expenses, household, budgets, recurring).
+   * We still filter by `householdId` explicitly for predictable results.
    */
   const loadActiveHouseholdData = useCallback(
     async (householdId: string, signedInUserId: string) => {
@@ -406,6 +404,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         .from("expenses")
         .select(EXPENSE_SELECT_HIERARCHY)
         .eq("household_id", householdId)
+        .or(`is_joint.eq.true,user_id.eq.${signedInUserId}`)
         .order("date", { ascending: false });
 
       if (
@@ -417,6 +416,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           .from("expenses")
           .select(EXPENSE_SELECT_LEGACY)
           .eq("household_id", householdId)
+          .or(`is_joint.eq.true,user_id.eq.${signedInUserId}`)
           .order("date", { ascending: false });
         expenseRows = legacy.data as Record<string, unknown>[] | null;
         expensesError = legacy.error;
@@ -569,9 +569,8 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   );
 
   /**
-   * Loads everything that's scoped to the signed-in USER: their profile, the
-   * full list of households they belong to, and any pending join request.
-   * Then defers to {@link loadActiveHouseholdData} for the active household.
+   * Loads user-scoped data (profile, memberships, pending join), then loads
+   * the active household via `loadActiveHouseholdData`.
    */
   const loadHouseholdData = useCallback(
     async (signedInUserId: string) => {
@@ -649,7 +648,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       setCurrentUser(me);
       setPendingRequest(null);
 
-      // Fetch every household the user belongs to.
+      // Fetch all memberships for this user.
       const { data: householdRows, error: myHouseholdsError } = await supabase
         .from("household_members")
         .select("household:households(id, name, household_type, created_by)")
@@ -679,16 +678,14 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         setMyHouseholds(resolvedHouseholds);
       }
 
-      // Decide which household is active. Prefer the user's stored choice,
-      // but fall back to the first membership and persist that choice.
+      // Pick active household: stored choice first, otherwise first membership.
       let nextActiveId = me.active_household_id;
       if (
         nextActiveId &&
         resolvedHouseholds.length > 0 &&
         !resolvedHouseholds.some((h) => h.id === nextActiveId)
       ) {
-        // Their stored "active" no longer matches any membership (e.g. they
-        // were removed from a household). Pick the first available one.
+        // Stored active household is no longer valid; fall back gracefully.
         nextActiveId = resolvedHouseholds[0].id;
       }
       if (!nextActiveId && resolvedHouseholds.length > 0) {
@@ -708,7 +705,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       setActiveHouseholdId(nextActiveId);
 
       if (!nextActiveId) {
-        // User has no memberships yet — nothing to load.
+        // No memberships yet.
         resetHouseholdState();
         return;
       }
@@ -1221,8 +1218,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         throw new Error(insertError.message);
       }
 
-      // Advance each due template by one month. Sequential is fine here:
-      // each row has its own next_process_month and N is small.
+      // Advance each due template by one month.
       for (const template of due) {
         const advanced = addOneMonth(template.next_process_month);
         const { error: updateError } = await supabase
@@ -1234,7 +1230,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // Re-fetch so the UI (including dashboard expenses) updates instantly.
+      // Re-fetch to refresh dashboard and settings state.
       await loadActiveHouseholdData(activeHouseholdId, currentUser.id);
 
       return { processedCount: due.length };

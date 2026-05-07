@@ -1,9 +1,9 @@
-/** Same as `Member` — one row per auth user in `public.users`. */
+/** Alias for `public.users` rows in app code. */
 export type User = Member;
 
 export type HouseholdRole = "owner" | "member";
 
-/** Row in `household_members` (many-to-many with role). */
+/** Membership row with role. */
 export interface HouseholdMember {
   user_id: string;
   household_id: string;
@@ -12,21 +12,13 @@ export interface HouseholdMember {
 
 export interface Member {
   id: string;
-  /**
-   * The household this user is currently looking at. Membership in additional
-   * households is tracked via the `household_members` table — this column is
-   * only the active selection.
-   */
+  /** Active household selection for this user. */
   active_household_id: string | null;
   display_name: string;
   created_at: string;
 }
 
-/**
- * Lightweight household record used for the household switcher and anywhere
- * we render the active household. The full row also has `created_by`, which
- * is needed to determine whether the current user owns the household.
- */
+/** Household record used across switcher, settings, and dashboard. */
 export interface Household {
   id: string;
   name: string;
@@ -55,7 +47,7 @@ export interface Expense {
   is_joint: boolean;
 }
 
-/** Shape used to insert a new expense. household_id is filled by the context from the current member. */
+/** Insert payload for new expenses (`household_id` is set in context). */
 export type NewExpenseInput = Omit<Expense, "id" | "household_id">;
 
 export type NotificationType =
@@ -107,6 +99,6 @@ export interface RecurringExpense {
   category: string;
   note: string;
   is_joint: boolean;
-  /** "YYYY-MM" — first month this template should fire. */
+  /** First month this template should run ("YYYY-MM"). */
   next_process_month: string;
 }

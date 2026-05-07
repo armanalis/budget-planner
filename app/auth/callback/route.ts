@@ -17,7 +17,6 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/sign-up?error=callback`);
   }
 
-  // Provisioning (household + profile, or join request + notification)
-  // happens in the public.handle_new_user() trigger on auth.users.
+  // New-user provisioning is handled by `public.handle_new_user()`.
   return NextResponse.redirect(`${origin}${next}`);
 }

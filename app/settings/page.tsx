@@ -1056,12 +1056,10 @@ function DeleteHouseholdForm({
 
     setSubmitting(true);
     try {
-      const remaining = await deleteActiveHousehold();
+      await deleteActiveHousehold();
       setConfirmValue("");
       setSuccessMessage(t("householdDeletedSuccessfully"));
-      if (remaining === 0) {
-        router.push("/onboarding");
-      }
+      router.push("/onboarding");
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : t("settingsDeleteHouseholdFailed"),

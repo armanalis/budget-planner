@@ -24,7 +24,7 @@ export async function createClient() {
             cookieStore.set(name, value, options),
           );
         } catch {
-          /* ignore when called from a context that cannot mutate cookies */
+          /* ignore in read-only cookie contexts */
         }
       },
     },

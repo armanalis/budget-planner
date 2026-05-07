@@ -374,9 +374,9 @@ const dictionary = {
     budgetTracker: "Bütçe takibi",
     totalSpent: "Toplam harcama",
     jointTotal: "Ortak toplam",
-    userTotal: "{name} toplamı",
+    userTotal: "{name}'in toplamı",
     jointExpenses: "Ortak giderler",
-    userExpenses: "{name} giderleri",
+    userExpenses: "{name}'in giderleri",
     noDataYet: "Henüz veri yok.",
     noNote: "Not eklenmedi.",
     viewOnly: "Sadece görüntüleme",
@@ -787,7 +787,7 @@ const dictionary = {
 
 export type TranslationKey = keyof typeof dictionary.en;
 
-/** English values persisted on `Expense.category` */
+/** Canonical English values stored in `Expense.category`. */
 export const EXPENSE_CATEGORY_ENGLISH = [
   "Movie subscriptions",
   "Gym",
@@ -856,7 +856,7 @@ export function translateMainCategory(
   return mainCategory;
 }
 
-/** Label for lists (joint account, member detail, recurring rows). */
+/** Display label used in list views and recurring rows. */
 export function formatExpenseCategoryDisplay(
   t: (key: TranslationKey, vars?: Record<string, string>) => string,
   expense: Pick<Expense, "main_category" | "sub_category" | "category">,
