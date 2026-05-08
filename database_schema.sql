@@ -1,8 +1,5 @@
--- Budget planner cloud schema (Supabase / PostgreSQL)
--- Run in the Supabase SQL editor or via migrations.
---
 -- This file is idempotent: every run drops/recreates policies and functions
--- but never drops user data. Run it whenever you change the schema.
+-- but never drops user data.
 --
 -- This revision introduces multi-household support:
 --   - `users.household_id` was renamed to `users.active_household_id`.
