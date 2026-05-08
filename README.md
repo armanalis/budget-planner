@@ -10,14 +10,13 @@ A multi-household budget planning web app built with Next.js and Supabase.
 This project helps couples, families, and shared households track spending, set budgets, switch between multiple households, and collaborate in one place.
 
 ## Why I Built This
-
-I wanted a practical, real-world budgeting app that supports scenarios most simple budget tools miss:
+My friends and I have been trying to figure out how much we actually spend in a month. It is hard to keep track because we use cash for coffee from the vending machine and use credit cards for online shopping and other expenses. I wanted a practical, real-world budgeting app that solves this problem and supports scenarios that most simple budget tools miss:
 - one user in multiple households
 - owner/member permissions
 - category + sub-category budgets
 - shared and personal spending together
 
-The project was developed iteratively with AI assistance for implementation speed, debugging support, and refactoring help, while product direction, feature priorities, and acceptance decisions were made by me.
+I built this project myself, utilizing AI strictly as an assistant to speed up implementation, debug code, and help with refactoring. All product direction, feature priorities, and final decisions were my own.
 
 ## Screenshots
 
@@ -52,8 +51,6 @@ The UI is responsive. Use **`{name}_pc.png`** for desktop and **`{name}.png`** f
 #### Mobile
 
 ![Members — mobile](docs/screenshots/members.png)
-
-If an image is missing locally, GitHub will show a broken image until you add that file to `docs/screenshots/`.
 
 ## Core Features
 
