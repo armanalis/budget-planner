@@ -36,11 +36,11 @@ The UI is responsive. Use **`{name}_pc.png`** for desktop and **`{name}.png`** f
 
 #### Desktop
 
-![Add expense — desktop](docs/screenshots/add-expense_pc.png)
+![Add expense — desktop](docs/screenshots/addexpense_pc.png)
 
 #### Mobile
 
-![Add expense — mobile](docs/screenshots/add-expense.png)
+![Add expense — mobile](docs/screenshots/addexpense.png)
 
 ### Members
 
