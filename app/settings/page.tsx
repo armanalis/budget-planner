@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   Download,
+  Eraser,
   Eye,
   EyeOff,
   FileSpreadsheet,
@@ -101,6 +102,7 @@ export default function SettingsPage() {
     activeRole,
     renameHousehold,
     deleteActiveHousehold,
+    clearActiveHouseholdData,
     recurringExpenses,
     deleteRecurringExpense,
     processRecurringExpenses,
@@ -180,6 +182,10 @@ export default function SettingsPage() {
               key={household?.name ?? ""}
               currentName={household?.name ?? ""}
               renameHousehold={renameHousehold}
+            />
+            <ClearHouseholdDataForm
+              key={`clear-${household?.id ?? ""}`}
+              clearActiveHouseholdData={clearActiveHouseholdData}
             />
             <DeleteHouseholdForm
               key={`delete-${household?.id ?? ""}`}
@@ -1029,6 +1035,100 @@ function RenameHouseholdForm({
         {submitting
           ? t("settingsRenamingHousehold")
           : t("settingsRenameHousehold")}
+      </button>
+    </form>
+  );
+}
+
+function ClearHouseholdDataForm({
+  clearActiveHouseholdData,
+}: {
+  clearActiveHouseholdData: () => Promise<void>;
+}) {
+  const { t } = useLanguage();
+  const [confirmValue, setConfirmValue] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const canClear =
+    confirmValue.trim().replace(/\s+/g, " ").toUpperCase() === "CLEAR ALL";
+
+  const handleClear = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    if (!canClear) return;
+
+    setSubmitting(true);
+    try {
+      await clearActiveHouseholdData();
+      setConfirmValue("");
+      setSuccessMessage(t("clearHouseholdDataSuccess"));
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      const lower = raw.toLowerCase();
+      if (lower.includes("only the household owner")) {
+        setErrorMessage(t("settingsHouseholdOwnerOnly"));
+      } else {
+        setErrorMessage(`${t("clearHouseholdDataFailed")} (${raw})`);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form
+      onSubmit={handleClear}
+      className="mt-2 rounded-lg border border-amber-300/60 bg-amber-50/70 p-3 dark:border-amber-900/50 dark:bg-amber-950/25"
+    >
+      <p className="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100">
+        <Eraser className="h-4 w-4 shrink-0" aria-hidden />
+        {t("clearHouseholdDataTitle")}
+      </p>
+      <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
+        {t("clearHouseholdDataDescription")}
+      </p>
+      <p className="mt-2 text-xs font-medium text-amber-900 dark:text-amber-200">
+        {t("clearHouseholdDataConfirmHint")}
+      </p>
+      <label className="mt-2 block">
+        <span className="mb-1 block text-xs font-medium text-amber-900 dark:text-amber-200">
+          {t("clearHouseholdDataConfirmLabel")}
+        </span>
+        <input
+          type="text"
+          value={confirmValue}
+          onChange={(event) => {
+            setConfirmValue(event.target.value);
+            setErrorMessage(null);
+            setSuccessMessage(null);
+          }}
+          placeholder={t("clearHouseholdDataConfirmPlaceholder")}
+          className={inputClass}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </label>
+
+      {errorMessage && (
+        <p className="mt-2 text-xs font-medium text-red-600 dark:text-red-400">
+          {errorMessage}
+        </p>
+      )}
+      {successMessage && (
+        <p className="mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-800">
+          {successMessage}
+        </p>
+      )}
+
+      <button
+        type="submit"
+        disabled={submitting || !canClear}
+        className="mt-3 inline-flex w-full items-center justify-center rounded-lg bg-amber-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+      >
+        {submitting ? t("clearHouseholdDataBusy") : t("clearHouseholdDataButton")}
       </button>
     </form>
   );

@@ -96,6 +96,8 @@ type ExpenseContextValue = {
   renameHousehold: (newName: string) => Promise<void>;
   /** Owner-only. Deletes active household and returns remaining memberships for this user. */
   deleteActiveHousehold: () => Promise<number>;
+  /** Owner-only. Wipes expenses, messages, budgets, and recurring data for the active household. */
+  clearActiveHouseholdData: () => Promise<void>;
   updateBudget: (category: string, limitAmount: number) => Promise<void>;
   upsertSubcategoryBudget: (
     mainCategory: string,
@@ -955,6 +957,13 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       : Number(remaining ?? 0);
   }, [supabase, refresh]);
 
+  const clearActiveHouseholdData = useCallback(async () => {
+    const { error: rpcError } = await supabase.rpc("clear_active_household_data");
+    if (rpcError) throw new Error(rpcError.message);
+    setLastAddedExpenseId(null);
+    await refresh();
+  }, [supabase, refresh]);
+
   const addExpense = useCallback(
     async (input: NewExpenseInput) => {
       if (!currentUser || !activeHouseholdId) {
@@ -1402,6 +1411,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       rejectJoinRequest,
       renameHousehold,
       deleteActiveHousehold,
+      clearActiveHouseholdData,
       updateBudget,
       upsertSubcategoryBudget,
       deleteSubcategoryBudget,
@@ -1445,6 +1455,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       rejectJoinRequest,
       renameHousehold,
       deleteActiveHousehold,
+      clearActiveHouseholdData,
       updateBudget,
       upsertSubcategoryBudget,
       deleteSubcategoryBudget,

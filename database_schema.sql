@@ -1467,6 +1467,54 @@ $$;
 GRANT EXECUTE ON FUNCTION public.rename_household(TEXT) TO authenticated;
 
 -- ---------------------------------------------------------------------------
+-- Owner-only RPC: remove all transactional data for the active household
+-- (expenses, chat, budgets, recurring rules). Does not remove members or the
+-- household row. Name and memberships stay intact.
+-- ---------------------------------------------------------------------------
+DROP FUNCTION IF EXISTS public.clear_active_household_data();
+
+CREATE OR REPLACE FUNCTION public.clear_active_household_data()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_household_id UUID;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  SELECT u.active_household_id INTO v_household_id
+  FROM public.users u
+  WHERE u.id = auth.uid();
+
+  IF v_household_id IS NULL THEN
+    RAISE EXCEPTION 'No active household for this user';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.household_members hm
+    WHERE hm.household_id = v_household_id
+      AND hm.user_id = auth.uid()
+      AND hm.role = 'owner'
+  ) THEN
+    RAISE EXCEPTION 'Only the household owner can clear data';
+  END IF;
+
+  DELETE FROM public.expenses WHERE household_id = v_household_id;
+  DELETE FROM public.messages WHERE household_id = v_household_id;
+  DELETE FROM public.budgets WHERE household_id = v_household_id;
+  DELETE FROM public.subcategory_budgets WHERE household_id = v_household_id;
+  DELETE FROM public.recurring_expenses WHERE household_id = v_household_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.clear_active_household_data() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.clear_active_household_data() TO authenticated;
+
+-- ---------------------------------------------------------------------------
 -- Owner-only RPC: delete the user's currently active household.
 -- If this household is active for any users, move them to one of their other
 -- memberships when possible; otherwise set active_household_id to NULL.

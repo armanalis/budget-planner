@@ -1,6 +1,6 @@
 "use client";
 
-import { use } from "react";
+import { useParams } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { useExpenses } from "@/context/ExpenseContext";
 import {
@@ -11,12 +11,10 @@ import {
 const cardClass =
   "rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900";
 
-export default function MemberLedgerPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = use(params);
+export default function MemberLedgerPage() {
+  const params = useParams<{ id?: string | string[] }>();
+  const idParam = params?.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam ?? "";
   const { expenses, members, deleteExpense, currentUser, selectedMonth } =
     useExpenses();
   const { t } = useLanguage();
