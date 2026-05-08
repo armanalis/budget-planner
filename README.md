@@ -20,37 +20,21 @@ I built this project myself, utilizing AI strictly as an assistant to speed up i
 
 ## Screenshots
 
-The UI is responsive. Use **`{name}_pc.png`** for desktop and **`{name}.png`** for the same screen on mobile—save PNGs under [`docs/screenshots/`](docs/screenshots/).
-
 ### Dashboard
+| Desktop View | Mobile View |
+| :---: | :---: |
+| <img src="docs/screenshots/dashboard_pc.png" width="600" alt="Dashboard Desktop"> | <img src="docs/screenshots/dashboard.png" width="200" alt="Dashboard Mobile"> |
 
-#### Desktop
-
-![Dashboard — desktop](docs/screenshots/dashboard_pc.png)
-
-#### Mobile
-
-![Dashboard — mobile](docs/screenshots/dashboard.png)
-
-### Add expense
-
-#### Desktop
-
-![Add expense — desktop](docs/screenshots/addexpense_pc.png)
-
-#### Mobile
-
-![Add expense — mobile](docs/screenshots/addexpense.png)
+### Add Expense
+| Desktop View | Mobile View |
+| :---: | :---: |
+| <img src="docs/screenshots/addexpense_pc.png" width="600" alt="Add Expense Desktop"> | <img src="docs/screenshots/addexpense.png" width="200" alt="Add Expense Mobile"> |
 
 ### Members
+| Desktop View | Mobile View |
+| :---: | :---: |
+| <img src="docs/screenshots/members_pc.png" width="600" alt="Members Desktop"> | <img src="docs/screenshots/members.png" width="200" alt="Members Mobile"> |
 
-#### Desktop
-
-![Members — desktop](docs/screenshots/members_pc.png)
-
-#### Mobile
-
-![Members — mobile](docs/screenshots/members.png)
 
 ## Core Features
 
