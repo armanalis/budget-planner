@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useExpenses } from "@/context/ExpenseContext";
+import { useUnreadMessages } from "@/hooks/useUnreadMessages";
 import { createClient } from "@/utils/supabase/client";
 import {
   useLanguage,
@@ -293,27 +294,65 @@ function HeaderControls() {
   );
 }
 
-function NotificationBell() {
-  const { unreadNotificationCount } = useExpenses();
-  const { t } = useLanguage();
-  const pathname = usePathname();
-  const isActive = pathname.startsWith("/notifications");
-
+function InboxIconLink({
+  href,
+  ariaLabel,
+  isActive,
+  count,
+  icon: Icon,
+}: {
+  href: string;
+  ariaLabel: string;
+  isActive: boolean;
+  count: number;
+  icon: React.ComponentType<{ className?: string }>;
+}) {
   return (
     <Link
-      href="/notifications"
-      aria-label={t("notificationsTitle")}
+      href={href}
+      aria-label={ariaLabel}
       className={`relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition dark:border-gray-700 dark:bg-gray-800 dark:text-slate-200 ${
         isActive ? "ring-2 ring-blue-500" : ""
       }`}
     >
-      <Bell className="h-4 w-4" aria-hidden />
-      {unreadNotificationCount > 0 && (
+      <Icon className="h-4 w-4" aria-hidden />
+      {count > 0 && (
         <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
-          {unreadNotificationCount > 9 ? "9+" : unreadNotificationCount}
+          {count > 9 ? "9+" : count}
         </span>
       )}
     </Link>
+  );
+}
+
+function NotificationBell() {
+  const { unreadNotificationCount } = useExpenses();
+  const { t } = useLanguage();
+  const pathname = usePathname();
+
+  return (
+    <InboxIconLink
+      href="/notifications"
+      ariaLabel={t("notificationsTitle")}
+      isActive={pathname.startsWith("/notifications")}
+      count={unreadNotificationCount}
+      icon={Bell}
+    />
+  );
+}
+
+function MessagesBell({ count }: { count: number }) {
+  const { t } = useLanguage();
+  const pathname = usePathname();
+
+  return (
+    <InboxIconLink
+      href="/messages"
+      ariaLabel={t("messagesTitle")}
+      isActive={pathname.startsWith("/messages")}
+      count={count}
+      icon={MessageCircle}
+    />
   );
 }
 
@@ -516,63 +555,30 @@ function PendingApprovalScreen({
   );
 }
 
-export default function AppShell({ children }: { children: React.ReactNode }) {
+function NavBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-semibold text-white">
+      {count > 9 ? "9+" : count}
+    </span>
+  );
+}
+
+function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { t } = useLanguage();
   const activeTitle = t(getPageTitleKey(pathname));
-  const loadingLogSentRef = useRef(false);
-
+  const unreadMessageCount = useUnreadMessages();
   const {
     currentUser,
     selectedMonth,
     setSelectedMonth,
     signOut,
-    loading,
-    error,
-    pendingRequest,
-    isAuthenticated,
     unreadNotificationCount,
   } = useExpenses();
 
-  if (loading) {
-    if (!loadingLogSentRef.current) {
-      loadingLogSentRef.current = true;
-      // #region agent log
-      fetch("http://127.0.0.1:7863/ingest/47e3ad6d-fc70-4a01-9dfc-fd6ebfda7cca", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "b2f15c",
-        },
-        body: JSON.stringify({
-          sessionId: "b2f15c",
-          runId: "post-fix",
-          hypothesisId: "H3",
-          location: "components/app-shell.tsx:loading-branch",
-          message: "AppShell loading render",
-          data: { pathname, loadingText: t("loading") },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-    }
-    return (
-      <div className="mx-auto flex min-h-dvh w-full max-w-md items-center justify-center bg-slate-50 px-6 text-center dark:bg-gray-950">
-        <p className="text-sm text-slate-500 dark:text-slate-400">{t("loading")}</p>
-      </div>
-    );
-  }
-
   if (!currentUser) {
-    if (pathname === "/sign-up" || pathname === "/reset-password") {
-      return <>{children}</>;
-    }
-    if (isAuthenticated && pendingRequest) {
-      return (
-        <PendingApprovalScreen householdName={pendingRequest.household_name} />
-      );
-    }
-    return <LoginScreen contextError={error} />;
+    return null;
   }
 
   const monthInputClass =
@@ -599,6 +605,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             {navItems.map((item) => {
               const isActive = isNavItemActive(pathname, item.href);
               const Icon = item.icon;
+              const badgeCount =
+                item.href === "/messages"
+                  ? unreadMessageCount
+                  : 0;
               return (
                 <li key={item.href}>
                   <Link
@@ -610,7 +620,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     }`}
                   >
                     <Icon className="h-4 w-4" aria-hidden />
-                    <span>{t(item.labelKey)}</span>
+                    <span className="flex-1">{t(item.labelKey)}</span>
+                    <NavBadge count={badgeCount} />
                   </Link>
                 </li>
               );
@@ -677,6 +688,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </div>
             <div className="flex shrink-0 flex-col items-end gap-2">
               <div className="flex items-center gap-2">
+                <MessagesBell count={unreadMessageCount} />
                 <NotificationBell />
                 <button
                   type="button"
@@ -709,7 +721,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <h1 className="text-lg font-semibold text-slate-900 dark:text-white">
               {activeTitle}
             </h1>
-            <NotificationBell />
+            <div className="flex items-center gap-2">
+              <MessagesBell count={unreadMessageCount} />
+              <NotificationBell />
+            </div>
           </div>
         </header>
 
@@ -727,18 +742,27 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {navItems.map((item) => {
             const isActive = isNavItemActive(pathname, item.href);
             const Icon = item.icon;
+            const badgeCount =
+              item.href === "/messages" ? unreadMessageCount : 0;
 
             return (
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className={`flex flex-col items-center justify-center gap-1 py-2 text-xs ${
+                  className={`relative flex flex-col items-center justify-center gap-1 py-2 text-xs ${
                     isActive
                       ? "text-blue-600 dark:text-blue-400"
                       : "text-slate-500 dark:text-slate-400"
                   }`}
                 >
-                  <Icon className="h-5 w-5" />
+                  <span className="relative">
+                    <Icon className="h-5 w-5" />
+                    {badgeCount > 0 && (
+                      <span className="absolute -right-2 -top-1 inline-flex h-3.5 min-w-[0.875rem] items-center justify-center rounded-full bg-red-500 px-0.5 text-[9px] font-semibold text-white">
+                        {badgeCount > 9 ? "9+" : badgeCount}
+                      </span>
+                    )}
+                  </span>
                   <span className="text-[11px]">{t(item.labelKey)}</span>
                 </Link>
               </li>
@@ -748,4 +772,65 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </nav>
     </div>
   );
+}
+
+export default function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const { t } = useLanguage();
+  const {
+    currentUser,
+    loading,
+    error,
+    pendingRequest,
+    isAuthenticated,
+  } = useExpenses();
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (!loading) {
+      setLoadingTimedOut(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setLoadingTimedOut(true), 12_000);
+    return () => window.clearTimeout(timer);
+  }, [loading]);
+
+  if (loading && !loadingTimedOut) {
+    return (
+      <div className="mx-auto flex min-h-dvh w-full max-w-md items-center justify-center bg-slate-50 px-6 text-center dark:bg-gray-950">
+        <p className="text-sm text-slate-500 dark:text-slate-400">{t("loading")}</p>
+      </div>
+    );
+  }
+
+  if (loading && loadingTimedOut) {
+    return (
+      <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-3 bg-slate-50 px-6 text-center dark:bg-gray-950">
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          {error ?? "Taking longer than expected to load your household."}
+        </p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+        >
+          Reload
+        </button>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    if (pathname === "/sign-up" || pathname === "/reset-password") {
+      return <>{children}</>;
+    }
+    if (isAuthenticated && pendingRequest) {
+      return (
+        <PendingApprovalScreen householdName={pendingRequest.household_name} />
+      );
+    }
+    return <LoginScreen contextError={error} />;
+  }
+
+  return <AuthenticatedAppShell>{children}</AuthenticatedAppShell>;
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import ExpensePayerBadge from "@/components/ExpensePayerBadge";
 import { useExpenses } from "@/context/ExpenseContext";
 import {
   formatExpenseCategoryDisplay,
@@ -29,7 +30,8 @@ export default function JointAccountPage() {
       ) : (
         ledgerExpenses.map((expense) => {
           const canDelete = currentUser?.id === expense.user_id;
-          const payerName = memberNameById.get(expense.user_id) ?? "—";
+          const showPayer =
+            currentUser != null && expense.user_id !== currentUser.id;
 
           return (
             <article key={expense.id} className={cardClass}>
@@ -54,8 +56,16 @@ export default function JointAccountPage() {
                 </div>
               </div>
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                {expense.date} · {payerName}
+                {expense.date}
               </p>
+              {showPayer && (
+                <ExpensePayerBadge
+                  expense={expense}
+                  fallbackName={memberNameById.get(expense.user_id)}
+                  paidByLabel={t("paidBy")}
+                  unknownMemberLabel={t("unknownMember")}
+                />
+              )}
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
                 {expense.note || t("noNote")}
               </p>

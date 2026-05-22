@@ -35,9 +35,11 @@ export default function SignUpPage() {
   }, [t]);
 
   useEffect(() => {
-    if (!loading && currentUser) {
+    if (loading || !currentUser) return;
+    const timer = window.setTimeout(() => {
       router.replace("/");
-    }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loading, currentUser, router]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {

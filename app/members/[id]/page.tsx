@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { Trash2 } from "lucide-react";
+import ExpensePayerBadge from "@/components/ExpensePayerBadge";
 import { useExpenses } from "@/context/ExpenseContext";
 import {
   formatExpenseCategoryDisplay,
@@ -20,11 +21,14 @@ export default function MemberLedgerPage() {
   const { t } = useLanguage();
 
   const member = members.find((m) => m.id === id);
+  const memberNameById = new Map(members.map((m) => [m.id, m.display_name]));
   const ledgerExpenses = expenses.filter(
     (expense) =>
       expense.user_id === id && expense.date.startsWith(selectedMonth),
   );
   const canDelete = currentUser?.id === id;
+  const viewingOtherMember =
+    currentUser != null && currentUser.id !== id;
   const hasExpenses = ledgerExpenses.length > 0;
 
   return (
@@ -81,6 +85,14 @@ export default function MemberLedgerPage() {
                 {expense.date}
                 {expense.is_joint ? ` · ${t("jointAccountTitle")}` : ""}
               </p>
+              {viewingOtherMember && (
+                <ExpensePayerBadge
+                  expense={expense}
+                  fallbackName={memberNameById.get(expense.user_id)}
+                  paidByLabel={t("paidBy")}
+                  unknownMemberLabel={t("unknownMember")}
+                />
+              )}
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
                 {expense.note || t("noNote")}
               </p>
@@ -119,11 +131,21 @@ export default function MemberLedgerPage() {
                   className="hover:bg-slate-50 dark:hover:bg-gray-800/40"
                 >
                   <td className="whitespace-nowrap px-4 py-3 text-slate-700 dark:text-slate-300">
-                    {expense.date}
+                    <div>{expense.date}</div>
                     {expense.is_joint && (
-                      <span className="ml-2 inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
+                      <span className="mt-1 inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
                         {t("jointAccountTitle")}
                       </span>
+                    )}
+                    {viewingOtherMember && (
+                      <div className="mt-1">
+                        <ExpensePayerBadge
+                          expense={expense}
+                          fallbackName={memberNameById.get(expense.user_id)}
+                          paidByLabel={t("paidBy")}
+                          unknownMemberLabel={t("unknownMember")}
+                        />
+                      </div>
                     )}
                   </td>
                   <td className="px-4 py-3 text-slate-800 dark:text-slate-200">

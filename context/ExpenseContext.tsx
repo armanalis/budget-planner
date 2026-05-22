@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type {
@@ -132,11 +133,17 @@ function addOneMonth(yyyymm: string): string {
   return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-const EXPENSE_SELECT_HIERARCHY =
+const EXPENSE_MEMBER_EMBED = "members:users(display_name)";
+
+const EXPENSE_SELECT_HIERARCHY_BASE =
   "id, household_id, user_id, amount, main_category, sub_category, category, date, note, is_joint";
 
-const EXPENSE_SELECT_LEGACY =
+const EXPENSE_SELECT_LEGACY_BASE =
   "id, household_id, user_id, amount, category, date, note, is_joint";
+
+const EXPENSE_SELECT_HIERARCHY = `${EXPENSE_SELECT_HIERARCHY_BASE}, ${EXPENSE_MEMBER_EMBED}`;
+
+const EXPENSE_SELECT_LEGACY = `${EXPENSE_SELECT_LEGACY_BASE}, ${EXPENSE_MEMBER_EMBED}`;
 
 const RECURRING_SELECT_HIERARCHY =
   "id, household_id, user_id, amount, main_category, sub_category, category, note, is_joint, next_process_month";
@@ -171,6 +178,37 @@ function isSubcategoryBudgetsSchemaError(message?: string | null): boolean {
   );
 }
 
+function isExpenseMemberEmbedError(message?: string | null): boolean {
+  const m = (message ?? "").toLowerCase();
+  return (
+    m.includes("members") ||
+    (m.includes("users") && m.includes("relationship")) ||
+    (m.includes("embed") && m.includes("expenses"))
+  );
+}
+
+function normalizeExpenseMember(
+  row: Record<string, unknown>,
+): Expense["members"] | undefined {
+  const raw = row.members ?? row.users;
+  const envelope = Array.isArray(raw) ? raw[0] : raw;
+  if (!envelope || typeof envelope !== "object") return undefined;
+
+  const member = envelope as Record<string, unknown>;
+  const fullName =
+    member.full_name == null
+      ? member.display_name == null
+        ? null
+        : String(member.display_name)
+      : String(member.full_name);
+
+  return {
+    full_name: fullName,
+    avatar_url:
+      member.avatar_url == null ? null : String(member.avatar_url),
+  };
+}
+
 function normalizeExpense(row: Record<string, unknown>): Expense {
   const resolvedMain =
     row.main_category == null || String(row.main_category).trim() === ""
@@ -180,6 +218,7 @@ function normalizeExpense(row: Record<string, unknown>): Expense {
     row.sub_category == null || String(row.sub_category).trim() === ""
       ? null
       : String(row.sub_category);
+  const members = normalizeExpenseMember(row);
   return {
     id: String(row.id),
     household_id: String(row.household_id),
@@ -194,6 +233,7 @@ function normalizeExpense(row: Record<string, unknown>): Expense {
     date: String(row.date ?? ""),
     note: String(row.note ?? ""),
     is_joint: Boolean(row.is_joint),
+    ...(members ? { members } : {}),
   };
 }
 
@@ -414,26 +454,42 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       let expenseRows: Record<string, unknown>[] | null = null;
       let expensesError: { message: string } | null = null;
 
-      const expenseAttempt = await supabase
-        .from("expenses")
-        .select(EXPENSE_SELECT_HIERARCHY)
-        .eq("household_id", householdId)
-        .or(`is_joint.eq.true,user_id.eq.${signedInUserId}`)
-        .order("date", { ascending: false });
+      async function fetchExpenseRows(selectList: string) {
+        return supabase
+          .from("expenses")
+          .select(selectList)
+          .eq("household_id", householdId)
+          .order("date", { ascending: false });
+      }
+
+      const expenseAttempt = await fetchExpenseRows(EXPENSE_SELECT_HIERARCHY);
 
       if (
         expenseAttempt.error &&
         isExpenseHierarchySchemaError(expenseAttempt.error.message)
       ) {
         setSupportsExpenseHierarchy(false);
-        const legacy = await supabase
-          .from("expenses")
-          .select(EXPENSE_SELECT_LEGACY)
-          .eq("household_id", householdId)
-          .or(`is_joint.eq.true,user_id.eq.${signedInUserId}`)
-          .order("date", { ascending: false });
+        const legacy = await fetchExpenseRows(EXPENSE_SELECT_LEGACY);
         expenseRows = legacy.data as Record<string, unknown>[] | null;
         expensesError = legacy.error;
+        if (
+          legacy.error &&
+          isExpenseMemberEmbedError(legacy.error.message)
+        ) {
+          const legacyBase = await fetchExpenseRows(EXPENSE_SELECT_LEGACY_BASE);
+          expenseRows = legacyBase.data as Record<string, unknown>[] | null;
+          expensesError = legacyBase.error;
+        }
+      } else if (
+        expenseAttempt.error &&
+        isExpenseMemberEmbedError(expenseAttempt.error.message)
+      ) {
+        const withoutEmbed = await fetchExpenseRows(EXPENSE_SELECT_HIERARCHY_BASE);
+        expenseRows = withoutEmbed.data as Record<string, unknown>[] | null;
+        expensesError = withoutEmbed.error;
+        if (!withoutEmbed.error) {
+          setSupportsExpenseHierarchy(true);
+        }
       } else {
         expenseRows = expenseAttempt.data as Record<string, unknown>[] | null;
         expensesError = expenseAttempt.error;
@@ -729,69 +785,84 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     [supabase, loadActiveHouseholdData, resetHouseholdState],
   );
 
+  const householdLoadIdRef = useRef(0);
+
   useEffect(() => {
-    let cancelled = false;
+    let active = true;
 
     async function bootstrap() {
+      const loadId = ++householdLoadIdRef.current;
       setLoading(true);
-      const { data, error: sessionError } = await supabase.auth.getSession();
-      if (cancelled) return;
+      try {
+        const { data, error: sessionError } = await supabase.auth.getSession();
+        if (!active || householdLoadIdRef.current !== loadId) return;
 
-      if (sessionError) {
-        if (isStaleRefreshSessionError(sessionError)) {
-          await clearStaleAuthSession(supabase);
-          if (cancelled) return;
-          setError(null);
-          setAuthUserId(null);
+        if (sessionError) {
+          if (isStaleRefreshSessionError(sessionError)) {
+            await clearStaleAuthSession(supabase);
+            if (!active || householdLoadIdRef.current !== loadId) return;
+            setError(null);
+            setAuthUserId(null);
+            setCurrentUser(null);
+            setMyHouseholds([]);
+            setActiveHouseholdId(null);
+            resetHouseholdState();
+            setPendingRequest(null);
+            setNotifications([]);
+            return;
+          }
+          setError(sessionError.message);
+        }
+
+        let userId = data.session?.user.id ?? null;
+
+        if (userId) {
+          const { error: userError } = await supabase.auth.getUser();
+          if (!active || householdLoadIdRef.current !== loadId) return;
+          if (userError && isStaleRefreshSessionError(userError)) {
+            await clearStaleAuthSession(supabase);
+            if (!active || householdLoadIdRef.current !== loadId) return;
+            setError(null);
+            userId = null;
+          }
+        }
+
+        setAuthUserId(userId);
+
+        if (!userId) {
           setCurrentUser(null);
           setMyHouseholds([]);
           setActiveHouseholdId(null);
           resetHouseholdState();
           setPendingRequest(null);
           setNotifications([]);
-          setLoading(false);
           return;
         }
-        setError(sessionError.message);
-      }
 
-      let userId = data.session?.user.id ?? null;
-
-      if (userId) {
-        const { error: userError } = await supabase.auth.getUser();
-        if (cancelled) return;
-        if (userError && isStaleRefreshSessionError(userError)) {
-          await clearStaleAuthSession(supabase);
-          if (cancelled) return;
-          setError(null);
-          userId = null;
+        await loadHouseholdData(userId);
+      } finally {
+        if (active && householdLoadIdRef.current === loadId) {
+          setLoading(false);
         }
       }
-
-      setAuthUserId(userId);
-
-      if (!userId) {
-        setCurrentUser(null);
-        setMyHouseholds([]);
-        setActiveHouseholdId(null);
-        resetHouseholdState();
-        setPendingRequest(null);
-        setNotifications([]);
-        setLoading(false);
-        return;
-      }
-
-      await loadHouseholdData(userId);
-      if (!cancelled) setLoading(false);
     }
 
     bootstrap();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (
+        event === "INITIAL_SESSION" ||
+        event === "TOKEN_REFRESHED" ||
+        event === "PASSWORD_RECOVERY"
+      ) {
+        return;
+      }
+
       const userId = session?.user.id ?? null;
       setAuthUserId(userId);
 
       if (!userId) {
+        householdLoadIdRef.current += 1;
         setCurrentUser(null);
         setMyHouseholds([]);
         setActiveHouseholdId(null);
@@ -803,14 +874,22 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      if (event !== "SIGNED_IN" && event !== "USER_UPDATED") {
+        return;
+      }
+
+      const loadId = ++householdLoadIdRef.current;
       setLoading(true);
       loadHouseholdData(userId).finally(() => {
-        if (!cancelled) setLoading(false);
+        if (householdLoadIdRef.current === loadId) {
+          setLoading(false);
+        }
       });
     });
 
     return () => {
-      cancelled = true;
+      active = false;
+      householdLoadIdRef.current += 1;
       sub.subscription.unsubscribe();
     };
   }, [supabase, loadHouseholdData, resetHouseholdState]);
@@ -1000,11 +1079,11 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           .single();
       }
 
-      let selectColumns = EXPENSE_SELECT_HIERARCHY;
+      let selectColumns = EXPENSE_SELECT_HIERARCHY_BASE;
       let payload: object = hierarchicalPayload;
 
       if (!supportsExpenseHierarchy) {
-        selectColumns = EXPENSE_SELECT_LEGACY;
+        selectColumns = EXPENSE_SELECT_LEGACY_BASE;
         payload = legacyPayload;
       }
 

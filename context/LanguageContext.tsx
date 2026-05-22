@@ -87,7 +87,8 @@ const dictionary = {
     sendMessage: "Send",
     sendingMessage: "Sending…",
     deleteMessage: "Delete message",
-    unknownMember: "Unknown member",
+    unknownMember: "Unknown Member",
+    paidBy: "Paid by {name}",
     membersTitle: "Household members",
     noMembers: "No members yet.",
     householdLabel: "Household",
@@ -108,6 +109,9 @@ const dictionary = {
     totalSpent: "Total Spent",
     jointTotal: "Joint Total",
     userTotal: "{name}'s Total",
+    householdSpendingTitle: "Personal spending this month",
+    youSpent: "You spent",
+    memberSpent: "{name} spent",
     jointExpenses: "Joint Expenses",
     userExpenses: "{name}'s Expenses",
     noDataYet: "No data yet.",
@@ -396,7 +400,8 @@ const dictionary = {
     sendMessage: "Gönder",
     sendingMessage: "Gönderiliyor…",
     deleteMessage: "Mesajı sil",
-    unknownMember: "Bilinmeyen üye",
+    unknownMember: "Bilinmeyen Üye",
+    paidBy: "{name} tarafından ödendi",
     membersTitle: "Ev üyeleri",
     noMembers: "Henüz üye yok.",
     householdLabel: "Ev",
@@ -417,6 +422,9 @@ const dictionary = {
     totalSpent: "Toplam harcama",
     jointTotal: "Ortak toplam",
     userTotal: "{name}'in toplamı",
+    householdSpendingTitle: "Bu ay kişisel harcamalar",
+    youSpent: "Sen harcadın",
+    memberSpent: "{name} harcadı",
     jointExpenses: "Ortak giderler",
     userExpenses: "{name}'in giderleri",
     noDataYet: "Henüz veri yok.",
@@ -707,6 +715,7 @@ const dictionary = {
     sendingMessage: "Invio…",
     deleteMessage: "Elimina messaggio",
     unknownMember: "Membro sconosciuto",
+    paidBy: "Pagato da {name}",
     membersTitle: "Membri della casa",
     noMembers: "Nessun membro ancora.",
     householdLabel: "Casa",
@@ -727,6 +736,9 @@ const dictionary = {
     totalSpent: "Totale speso",
     jointTotal: "Totale congiunto",
     userTotal: "Totale di {name}",
+    householdSpendingTitle: "Spese personali questo mese",
+    youSpent: "Hai speso",
+    memberSpent: "{name} ha speso",
     jointExpenses: "Spese congiunte",
     userExpenses: "Spese di {name}",
     noDataYet: "Nessun dato ancora.",
@@ -1091,70 +1103,11 @@ function interpolate(
 }
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const [currentLanguage, setCurrentLanguageState] = useState<Language>(() => {
-    // #region agent log
-    fetch("http://127.0.0.1:7863/ingest/47e3ad6d-fc70-4a01-9dfc-fd6ebfda7cca", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "b2f15c",
-      },
-      body: JSON.stringify({
-        sessionId: "b2f15c",
-        runId: "pre-fix",
-        hypothesisId: "H1",
-        location: "context/LanguageContext.tsx:init",
-        message: "LanguageProvider init start",
-        data: { hasWindow: typeof window !== "undefined" },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-    // Keep the first client render identical to SSR to avoid hydration mismatch.
-    if (typeof window === "undefined") {
-      // #region agent log
-      fetch("http://127.0.0.1:7863/ingest/47e3ad6d-fc70-4a01-9dfc-fd6ebfda7cca", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "b2f15c",
-        },
-        body: JSON.stringify({
-          sessionId: "b2f15c",
-          runId: "post-fix",
-          hypothesisId: "H1",
-          location: "context/LanguageContext.tsx:init",
-          message: "LanguageProvider server default",
-          data: { chosenLanguage: "en" },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-    }
-    return "en";
-  });
+  const [currentLanguage, setCurrentLanguageState] = useState<Language>("en");
   const [hydratedLanguage, setHydratedLanguage] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    // #region agent log
-    fetch("http://127.0.0.1:7863/ingest/47e3ad6d-fc70-4a01-9dfc-fd6ebfda7cca", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "b2f15c",
-      },
-      body: JSON.stringify({
-        sessionId: "b2f15c",
-        runId: "post-fix",
-        hypothesisId: "H1",
-        location: "context/LanguageContext.tsx:hydrate-effect",
-        message: "LanguageProvider client storage read",
-        data: { savedLanguage: saved },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     if (saved === "en" || saved === "tr" || saved === "it") {
       setCurrentLanguageState(saved);
     }
@@ -1163,24 +1116,6 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!hydratedLanguage) return;
-    // #region agent log
-    fetch("http://127.0.0.1:7863/ingest/47e3ad6d-fc70-4a01-9dfc-fd6ebfda7cca", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "b2f15c",
-      },
-      body: JSON.stringify({
-        sessionId: "b2f15c",
-        runId: "post-fix",
-        hypothesisId: "H2",
-        location: "context/LanguageContext.tsx:effect",
-        message: "LanguageProvider persist language",
-        data: { currentLanguage },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     localStorage.setItem(LANGUAGE_STORAGE_KEY, currentLanguage);
   }, [currentLanguage, hydratedLanguage]);
 

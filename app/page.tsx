@@ -20,9 +20,37 @@ const CHART_COLORS = [
   "#6366F1",
 ];
 
+const MEMBER_CARD_COLORS = [
+  "border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40",
+  "border-teal-200 bg-teal-50 dark:border-teal-800 dark:bg-teal-950/40",
+  "border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-950/40",
+  "border-violet-200 bg-violet-50 dark:border-violet-800 dark:bg-violet-950/40",
+];
+
+const MEMBER_TEXT_COLORS = [
+  "text-blue-700 dark:text-blue-400",
+  "text-teal-700 dark:text-teal-400",
+  "text-orange-700 dark:text-orange-400",
+  "text-violet-700 dark:text-violet-400",
+];
+
+const MEMBER_AMOUNT_COLORS = [
+  "text-blue-900 dark:text-blue-200",
+  "text-teal-900 dark:text-teal-200",
+  "text-orange-900 dark:text-orange-200",
+  "text-violet-900 dark:text-violet-200",
+];
+
 type CategorySlice = {
   name: string;
   value: number;
+};
+
+type MemberSpendingRow = {
+  id: string;
+  name: string;
+  total: number;
+  isCurrent: boolean;
 };
 
 function buildCategoryData(
@@ -113,7 +141,8 @@ function ExpensePieChart({
 }
 
 export default function Home() {
-  const { expenses, currentUser, selectedMonth, budgets } = useExpenses();
+  const { expenses, members, currentUser, selectedMonth, budgets } =
+    useExpenses();
   const { t } = useLanguage();
   const trendData = useTrends();
   const displayName = currentUser?.display_name ?? "—";
@@ -136,6 +165,29 @@ export default function Home() {
     () => monthExpenses.filter((expense) => expense.is_joint),
     [monthExpenses],
   );
+  const memberSpending = useMemo((): MemberSpendingRow[] => {
+    const personalByUser = new Map<string, number>();
+    for (const expense of monthExpenses) {
+      if (expense.is_joint) continue;
+      personalByUser.set(
+        expense.user_id,
+        (personalByUser.get(expense.user_id) ?? 0) + expense.amount,
+      );
+    }
+
+    const rows = members.map((member) => ({
+      id: member.id,
+      name: member.display_name,
+      total: personalByUser.get(member.id) ?? 0,
+      isCurrent: member.id === currentUser?.id,
+    }));
+
+    return rows.sort((a, b) => {
+      if (a.isCurrent) return -1;
+      if (b.isCurrent) return 1;
+      return b.total - a.total;
+    });
+  }, [monthExpenses, members, currentUser?.id]);
   const userChartData = useMemo(
     () => buildCategoryData(userExpenses),
     [userExpenses],
@@ -172,7 +224,7 @@ export default function Home() {
 
   return (
     <div className="space-y-4 md:space-y-6">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:gap-6">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:gap-6">
         <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm dark:border-emerald-800 dark:bg-emerald-950/40">
           <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
             {t("totalSpent")}
@@ -180,24 +232,53 @@ export default function Home() {
           <p className="mt-1 text-3xl font-bold text-emerald-900 dark:text-emerald-200">
             €{totalSpent.toFixed(2)}
           </p>
-        </section>
-        <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 shadow-sm dark:border-blue-800 dark:bg-blue-950/40">
-          <p className="text-xs font-medium text-blue-700 dark:text-blue-400">
-            {t("userTotal", { name: displayName })}
-          </p>
-          <p className="mt-1 text-xl font-semibold text-blue-900 dark:text-blue-200">
-            €{userTotal.toFixed(2)}
+          <p className="mt-1 text-xs text-emerald-800/80 dark:text-emerald-300/80">
+            {t("userTotal", { name: displayName })} €{userTotal.toFixed(2)} ·{" "}
+            {t("jointTotal")} €{jointTotal.toFixed(2)}
           </p>
         </section>
         <section className="rounded-xl border border-violet-200 bg-violet-50 p-4 shadow-sm dark:border-violet-800 dark:bg-violet-950/40">
           <p className="text-xs font-medium text-violet-700 dark:text-violet-400">
             {t("jointTotal")}
           </p>
-          <p className="mt-1 text-xl font-semibold text-violet-900 dark:text-violet-200">
+          <p className="mt-1 text-3xl font-bold text-violet-900 dark:text-violet-200">
             €{jointTotal.toFixed(2)}
           </p>
         </section>
       </div>
+
+      {memberSpending.length > 0 && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+          <h2 className="text-sm font-semibold text-slate-800 dark:text-white">
+            {t("householdSpendingTitle")}
+          </h2>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {memberSpending.map((row, index) => {
+              const colorIndex = index % MEMBER_CARD_COLORS.length;
+              const label = row.isCurrent
+                ? t("youSpent")
+                : t("memberSpent", { name: row.name });
+              return (
+                <article
+                  key={row.id}
+                  className={`rounded-xl border p-4 shadow-sm ${MEMBER_CARD_COLORS[colorIndex]} ${row.isCurrent ? "ring-2 ring-blue-400/60 dark:ring-blue-500/50" : ""}`}
+                >
+                  <p
+                    className={`text-xs font-medium ${MEMBER_TEXT_COLORS[colorIndex]}`}
+                  >
+                    {label}
+                  </p>
+                  <p
+                    className={`mt-1 text-2xl font-bold ${MEMBER_AMOUNT_COLORS[colorIndex]}`}
+                  >
+                    €{row.total.toFixed(2)}
+                  </p>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <BalancesCard />
 

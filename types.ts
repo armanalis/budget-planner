@@ -45,6 +45,7 @@ export interface Expense {
   date: string;
   note: string;
   is_joint: boolean;
+  members?: { full_name: string | null; avatar_url: string | null };
 }
 
 /** Insert payload for new expenses (`household_id` is set in context). */

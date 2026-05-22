@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Send, Trash2 } from "lucide-react";
 import { useExpenses } from "@/context/ExpenseContext";
 import { useLanguage } from "@/context/LanguageContext";
+import { markMessagesRead } from "@/hooks/useUnreadMessages";
 import { createClient } from "@/utils/supabase/client";
 import type { Message } from "@/types";
 
@@ -86,6 +87,9 @@ export default function MessagesPage() {
         setError(null);
       }
       setLoading(false);
+      if (householdId) {
+        markMessagesRead(householdId);
+      }
       requestAnimationFrame(scrollToBottom);
     })();
 

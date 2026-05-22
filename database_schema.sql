@@ -932,10 +932,7 @@ USING (user_id = auth.uid());
 DROP POLICY IF EXISTS expenses_select_same_household ON public.expenses;
 CREATE POLICY expenses_select_same_household
 ON public.expenses FOR SELECT TO authenticated
-USING (
-  household_id = public.current_household_id()
-  AND (is_joint = true OR user_id = auth.uid())
-);
+USING (household_id = public.current_household_id());
 
 DROP POLICY IF EXISTS expenses_insert_same_household ON public.expenses;
 CREATE POLICY expenses_insert_same_household
